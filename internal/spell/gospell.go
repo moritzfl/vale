@@ -21,9 +21,11 @@ type wordMatch struct {
 type goSpell struct {
 	dict map[string]struct{}
 
-	ireplacer *strings.Replacer
-	compounds []*regexp.Regexp
-	splitter  *splitter
+	ireplacer   *strings.Replacer
+	compounds   []*regexp.Regexp
+	splitter    *splitter
+	lemmaMap    map[string]string
+	baseToForms map[string][]string
 }
 
 type dictionary struct {
@@ -171,6 +173,55 @@ func (s *goSpell) spell(word string) bool {
 	return false
 }
 
+// Expand returns all inflected forms of a given word based on the dictionary's
+// affix rules. If the word is not found in the dictionary, it returns the
+// word itself. If the word has no affix rules, it returns the word itself.
+func (s *goSpell) Expand(word string) []string {
+	if s.lemmaMap == nil {
+		return []string{word}
+	}
+
+	base := s.lemmaMap[word]
+	if base == "" {
+		base = s.lemmaMap[strings.ToLower(word)]
+	}
+	if base == "" {
+		base = word
+	}
+
+	if forms, ok := s.baseToForms[base]; ok {
+		return forms
+	}
+	if forms, ok := s.baseToForms[strings.ToLower(base)]; ok {
+		return forms
+	}
+
+	return []string{word}
+}
+
+func mergeForms(existing []string, forms []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(forms))
+	merged := make([]string, 0, len(existing)+len(forms))
+
+	for _, form := range existing {
+		if _, ok := seen[form]; ok {
+			continue
+		}
+		seen[form] = struct{}{}
+		merged = append(merged, form)
+	}
+
+	for _, form := range forms {
+		if _, ok := seen[form]; ok {
+			continue
+		}
+		seen[form] = struct{}{}
+		merged = append(merged, form)
+	}
+
+	return merged
+}
+
 // newGoSpellReader creates a speller from io.Readers for
 // Hunspell files
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
@@ -187,9 +238,11 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 
 	gs := goSpell{
 		// TODO: Use fixed size from first list?
-		dict:      make(map[string]struct{}),
-		compounds: make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
-		splitter:  newSplitter(affix.WordChars),
+		dict:        make(map[string]struct{}),
+		compounds:   make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
+		splitter:    newSplitter(affix.WordChars),
+		lemmaMap:    make(map[string]string),
+		baseToForms: make(map[string][]string),
 	}
 
 	words := []string{}
@@ -199,6 +252,17 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 		//
 		// abandonware/M	Noun: uncountable
 		line = strings.Split(line, "\t")[0]
+
+		idx := strings.Index(line, "/")
+		var baseWord string
+		var hasAffix bool
+		if idx > 0 {
+			baseWord = line[:idx]
+			hasAffix = true
+		} else {
+			baseWord = line
+			hasAffix = false
+		}
 
 		words, err = affix.expand(line, words)
 		if err != nil {
@@ -211,7 +275,13 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 
 		for _, word := range words {
 			gs.dict[word] = struct{}{}
+			if hasAffix {
+				gs.lemmaMap[word] = baseWord
+			} else if _, ok := gs.lemmaMap[word]; !ok {
+				gs.lemmaMap[word] = baseWord
+			}
 		}
+		gs.baseToForms[baseWord] = mergeForms(gs.baseToForms[baseWord], words)
 	}
 
 	if err = scanner.Err(); err != nil {

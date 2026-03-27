@@ -145,6 +145,35 @@ func (m *Checker) Spell(word string) bool {
 	return false
 }
 
+// Expand returns all inflected forms of a given word based on the
+// dictionary's affix rules. It merges forms from all loaded dictionaries
+// that recognize the provided word.
+func (m *Checker) Expand(word string) []string {
+	seen := make(map[string]struct{})
+	forms := []string{}
+
+	for _, checker := range m.checkers {
+		expanded := checker.Expand(word)
+		if len(expanded) == 1 && expanded[0] == word {
+			continue
+		}
+
+		for _, form := range expanded {
+			if _, ok := seen[form]; ok {
+				continue
+			}
+			seen[form] = struct{}{}
+			forms = append(forms, form)
+		}
+	}
+
+	if len(forms) == 0 {
+		return []string{word}
+	}
+
+	return forms
+}
+
 // Suggest returns a list of suggestions for a given word.
 func (m *Checker) Suggest(word string) []string {
 	ranks := []wordMatch{}
@@ -225,22 +254,12 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	dic, err := os.Open(dicPath)
-	if err != nil {
-		return err
-	}
-
 	affPath, err := m.readAsset(name + ".aff")
 	if err != nil {
 		return err
 	}
 
-	aff, err := os.Open(affPath)
-	if err != nil {
-		return err
-	}
-
-	s, err := newGoSpellReader(aff, dic)
+	s, err := newGoSpell(affPath, dicPath)
 	if err != nil {
 		return err
 	}

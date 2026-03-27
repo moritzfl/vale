@@ -4,37 +4,55 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/exp/maps"
 
 	"github.com/errata-ai/regexp2"
 	"github.com/errata-ai/vale/v3/internal/core"
 	"github.com/errata-ai/vale/v3/internal/nlp"
+	"github.com/errata-ai/vale/v3/internal/spell"
 )
+
+var (
+	morphologyCheckerCache sync.Map
+)
+
+type morphologyReplacement struct {
+	partMaps []map[string]string
+}
 
 // Substitution switches the values of Swap for its keys.
 type Substitution struct {
-	Definition `mapstructure:",squash"`
-	Exceptions []string
-	repl       []string
-	Swap       map[string]string
-	exceptRe   *regexp2.Regexp
-	pattern    *regexp2.Regexp
-	Ignorecase bool
-	Nonword    bool
-	Vocab      bool
-	Capitalize bool
+	Definition   `mapstructure:",squash"`
+	Exceptions   []string
+	repl         []string
+	Swap         map[string]string
+	exceptRe     *regexp2.Regexp
+	pattern      *regexp2.Regexp
+	Ignorecase   bool
+	Nonword      bool
+	Vocab        bool
+	Capitalize   bool
+	Morphology   bool
+	Dictionaries []string
+	Aff          string
+	Dic          string
+	Dicpath      string
+	Append       bool
 
-	msgMap []string
+	msgMap   []string
+	morphMap []morphologyReplacement
+	path     string
 	// Deprecated
 	POS string
 }
 
 // NewSubstitution creates a new `substitution`-based rule.
-func NewSubstitution(cfg *core.Config, generic baseCheck, path string) (Substitution, error) {
-	rule := Substitution{Vocab: true}
+func NewSubstitution(cfg *core.Config, generic baseCheck, path string) (*Substitution, error) {
+	rule := &Substitution{Vocab: true, path: path}
 
-	err := decodeRule(generic, &rule)
+	err := decodeRule(generic, rule)
 	if err != nil {
 		return rule, readStructureError(err, path)
 	}
@@ -43,7 +61,6 @@ func NewSubstitution(cfg *core.Config, generic baseCheck, path string) (Substitu
 	if err != nil {
 		return rule, err
 	}
-	tokens := ""
 
 	re, err := updateExceptions(rule.Exceptions, cfg.AcceptedTokens, rule.Vocab)
 	if err != nil {
@@ -51,49 +68,255 @@ func NewSubstitution(cfg *core.Config, generic baseCheck, path string) (Substitu
 	}
 	rule.exceptRe = re
 
-	regex := makeRegexp(
-		cfg.WordTemplate,
-		rule.Ignorecase,
-		func() bool { return !rule.Nonword },
-		func() string { return "" }, true)
-
 	terms := maps.Keys(rule.Swap)
 	sort.Slice(terms, func(p, q int) bool {
 		return len(terms[p]) > len(terms[q])
 	})
 
-	replacements := []string{}
 	for _, regexstr := range terms {
 		rule.msgMap = append(rule.msgMap, regexstr)
-		replacement := rule.Swap[regexstr]
-
-		opens := strings.Count(regexstr, "(")
-		if opens != strings.Count(regexstr, "(?")+strings.Count(regexstr, `\(`) {
-			// We have a capture group, so we need to make it non-capturing.
-			regexstr, err = convertCaptureGroups(regexstr)
-			if err != nil {
-				return rule, core.NewE201FromTarget(err.Error(), regexstr, path)
-			}
-		}
-		tokens += `(` + regexstr + `)|`
-		replacements = append(replacements, replacement)
+		rule.repl = append(rule.repl, rule.Swap[regexstr])
 	}
-	regex = fmt.Sprintf(regex, strings.TrimRight(tokens, "|"))
 
-	re, err = regexp2.CompileStd(regex)
+	re, err = rule.compilePattern(cfg)
 	if err != nil {
-		return rule, core.NewE201FromPosition(err.Error(), path, 1)
+		return rule, err
 	}
 
 	rule.pattern = re
-	rule.repl = replacements
+
 	return rule, nil
+}
+
+// expandForMorphology expands a word to all its inflected forms using the
+// dictionary. If the word has no morphological variations, it returns the
+// word itself.
+func expandForMorphology(word string, gs *spell.Checker) string {
+	if gs == nil {
+		return word
+	}
+
+	parts := strings.Split(word, " ")
+	if len(parts) > 1 {
+		result := []string{}
+		expanded := false
+		for _, p := range parts {
+			pForms := gs.Expand(p)
+			if len(pForms) > 1 {
+				result = append(result, toAlternation(pForms))
+				expanded = true
+			} else {
+				result = append(result, p)
+			}
+		}
+		if expanded {
+			return strings.Join(result, " ")
+		}
+		return word
+	}
+
+	forms := gs.Expand(word)
+	if len(forms) <= 1 {
+		return word
+	}
+
+	return toAlternation(forms)
+}
+
+func toAlternation(forms []string) string {
+	return "(?:" + strings.Join(forms, "|") + ")"
+}
+
+func cloneStrings(values []string) []string {
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func buildMorphologyReplacement(source, replacement string, checker *spell.Checker) (morphologyReplacement, bool) {
+	if checker == nil {
+		return morphologyReplacement{}, false
+	}
+
+	sourceParts := strings.Split(source, " ")
+	replacementParts := strings.Split(replacement, " ")
+	if len(sourceParts) == 0 || len(sourceParts) != len(replacementParts) {
+		return morphologyReplacement{}, false
+	}
+
+	maps := make([]map[string]string, len(sourceParts))
+	for i := range sourceParts {
+		srcPart := sourceParts[i]
+		replPart := replacementParts[i]
+
+		partMap := map[string]string{strings.ToLower(srcPart): replPart}
+		srcForms := checker.Expand(srcPart)
+		replForms := checker.Expand(replPart)
+
+		if len(srcForms) > 1 {
+			if len(replForms) > 1 {
+				limit := len(srcForms)
+				if len(replForms) < limit {
+					limit = len(replForms)
+				}
+				for j := 0; j < limit; j++ {
+					partMap[strings.ToLower(srcForms[j])] = replForms[j]
+				}
+			} else {
+				for _, srcForm := range srcForms {
+					partMap[strings.ToLower(srcForm)] = replPart
+				}
+			}
+		}
+
+		maps[i] = partMap
+	}
+
+	return morphologyReplacement{partMaps: maps}, true
+}
+
+func (m morphologyReplacement) replacementForObserved(observed string) (string, bool) {
+	if len(m.partMaps) == 0 {
+		return "", false
+	}
+
+	parts := strings.Split(observed, " ")
+	if len(parts) != len(m.partMaps) {
+		return "", false
+	}
+
+	replaced := make([]string, len(parts))
+	for i, part := range parts {
+		repl, ok := m.partMaps[i][strings.ToLower(part)]
+		if !ok {
+			return "", false
+		}
+		replaced[i] = repl
+	}
+
+	return strings.Join(replaced, " "), true
+}
+
+func morphologyCheckerKey(
+	cfg *core.Config,
+	rulePath,
+	aff,
+	dic,
+	dicpath string,
+	appendDefault bool,
+	dictionaries []string,
+) string {
+	builder := strings.Builder{}
+	builder.Grow(len(cfg.StylesPath()) + len(rulePath) + len(aff) + len(dic) + len(dicpath) + len(dictionaries)*12 + 8)
+	builder.WriteString(cfg.StylesPath())
+	builder.WriteByte('\x00')
+	builder.WriteString(rulePath)
+	builder.WriteByte('\x00')
+	builder.WriteString(aff)
+	builder.WriteByte('\x00')
+	builder.WriteString(dic)
+	builder.WriteByte('\x00')
+	builder.WriteString(dicpath)
+	builder.WriteByte('\x00')
+	if appendDefault {
+		builder.WriteByte('1')
+	} else {
+		builder.WriteByte('0')
+	}
+
+	for _, name := range dictionaries {
+		builder.WriteByte('\x00')
+		builder.WriteString(name)
+	}
+
+	return builder.String()
+}
+
+func (s *Substitution) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, error) {
+	if !s.Morphology {
+		return nil, nil
+	}
+
+	dictionaries := cloneStrings(s.Dictionaries)
+	cacheKey := morphologyCheckerKey(
+		cfg,
+		s.path,
+		s.Aff,
+		s.Dic,
+		s.Dicpath,
+		s.Append,
+		dictionaries,
+	)
+	if cached, ok := morphologyCheckerCache.Load(cacheKey); ok {
+		return cached.(*spell.Checker), nil
+	}
+
+	checker, err := makeSpeller(&Spelling{
+		Aff:          s.Aff,
+		Dic:          s.Dic,
+		Dicpath:      s.Dicpath,
+		Dictionaries: dictionaries,
+		Append:       s.Append,
+	}, cfg, s.path)
+	if err != nil {
+		return nil, err
+	}
+
+	if cached, loaded := morphologyCheckerCache.LoadOrStore(cacheKey, checker); loaded {
+		return cached.(*spell.Checker), nil
+	}
+
+	return checker, nil
+}
+
+func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error) {
+	regex := makeRegexp(
+		cfg.WordTemplate,
+		s.Ignorecase,
+		func() bool { return !s.Nonword },
+		func() string { return "" }, true)
+
+	checker, err := s.makeMorphologyChecker(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	s.morphMap = make([]morphologyReplacement, len(s.msgMap))
+
+	tokens := ""
+	for i, regexstr := range s.msgMap {
+		expanded := regexstr
+		if checker != nil {
+			if mapped, ok := buildMorphologyReplacement(regexstr, s.repl[i], checker); ok {
+				s.morphMap[i] = mapped
+			}
+			expanded = expandForMorphology(regexstr, checker)
+		}
+
+		opens := strings.Count(expanded, "(")
+		if opens != strings.Count(expanded, "(?")+strings.Count(expanded, `\(`) {
+			expanded, err = convertCaptureGroups(expanded)
+			if err != nil {
+				return nil, core.NewE201FromTarget(err.Error(), expanded, s.path)
+			}
+		}
+		tokens += `(` + expanded + `)|`
+	}
+
+	regex = fmt.Sprintf(regex, strings.TrimRight(tokens, "|"))
+
+	pattern, err := regexp2.CompileStd(regex)
+	if err != nil {
+		return nil, core.NewE201FromPosition(err.Error(), s.path, 1)
+	}
+
+	return pattern, nil
 }
 
 // Run executes the `substitution`-based rule.
 //
 // The rule looks for one pattern and then suggests a replacement.
-func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.Alert, error) {
+func (s *Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core.Alert, error) {
 	var alerts []core.Alert
 
 	txt := blk.Text
@@ -108,9 +331,9 @@ func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core
 			if mat != -1 && idx > 0 && idx%2 == 0 {
 				loc := []int{mat, submat[idx+1]}
 
-				converted, err := re2Loc(txt, loc)
-				if err != nil {
-					return alerts, err
+				converted, convErr := re2Loc(txt, loc)
+				if convErr != nil {
+					return alerts, convErr
 				}
 
 				observed := converted
@@ -122,6 +345,7 @@ func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core
 				same := matchToken(expected, observed, false)
 				if !same && !isMatch(s.exceptRe, observed) {
 					action := s.Fields().Action
+					message := s.Message
 					if action.Name == "replace" && len(action.Params) == 0 {
 						action.Params = getOptions(expected)
 						if s.Capitalize && observed == core.CapFirst(observed) {
@@ -135,7 +359,7 @@ func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core
 						expected = core.ToSentence(action.Params, "or")
 						// NOTE: For backwards-compatibility, we need to ensure
 						// that we don't double quote.
-						s.Message = convertMessage(s.Message)
+						message = convertMessage(message)
 					}
 
 					a, aerr := makeAlert(s.Definition, loc, txt, cfg)
@@ -143,7 +367,7 @@ func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core
 						return alerts, aerr
 					}
 
-					a.Message, a.Description = formatMessages(s.Message,
+					a.Message, a.Description = formatMessages(message,
 						s.Description, expected, observed)
 					a.Action = action
 
@@ -157,12 +381,15 @@ func (s Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]core
 }
 
 // Fields provides access to the internal rule definition.
-func (s Substitution) Fields() Definition {
+func (s *Substitution) Fields() Definition {
 	return s.Definition
 }
 
 // Pattern is the internal regex pattern used by this rule.
-func (s Substitution) Pattern() string {
+func (s *Substitution) Pattern() string {
+	if s.pattern == nil {
+		return ""
+	}
 	return s.pattern.String()
 }
 
@@ -180,10 +407,16 @@ func convertCaptureGroups(msg string) (string, error) {
 	return captureOpen.Replace(msg, "(?:", -1, -1)
 }
 
-func subMsg(s Substitution, index int, observed string) (string, error) {
+func subMsg(s *Substitution, index int, observed string) (string, error) {
 	// Based on the current capture group (`idx`), we can determine
 	// the associated replacement string by using the `repl` slice:
 	expected := s.repl[index]
+	if index >= 0 && index < len(s.morphMap) {
+		if inflected, ok := s.morphMap[index].replacementForObserved(observed); ok {
+			expected = inflected
+		}
+	}
+
 	if s.Capitalize && observed == core.CapFirst(observed) {
 		expected = core.CapFirst(expected)
 	}

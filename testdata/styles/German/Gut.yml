@@ -1,0 +1,9 @@
+extends: substitution
+message: Consider using '%s' instead of '%s'
+level: warning
+ignorecase: false
+morphology: true
+dictionaries:
+  - de_DE
+swap:
+  gut: hervorragend

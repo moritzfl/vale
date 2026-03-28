@@ -90,6 +90,42 @@ func TestExistenceMorphologyMatchesInflectedToken(t *testing.T) {
 	}
 }
 
+func TestExistenceWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
+		"1\nutilize/A\n",
+	)
+
+	rule, err := makeExistenceWithConfig(cfg, baseCheck{
+		"tokens":       []string{"utilize"},
+		"morphology":   false,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, text := range []string{"We utilized this approach.", "We are utilizing this approach."} {
+		alerts, runErr := rule.Run(nlp.NewBlock("", text, ""), &core.File{}, cfg)
+		if runErr != nil {
+			t.Fatalf("run failed for %q: %v", text, runErr)
+		}
+		if len(alerts) != 0 {
+			t.Fatalf("expected 0 alerts for %q, got %d", text, len(alerts))
+		}
+	}
+}
+
 func FuzzExistenceInit(f *testing.F) {
 	f.Add("hello")
 	f.Fuzz(func(_ *testing.T, s string) {

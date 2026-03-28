@@ -189,3 +189,157 @@ func TestExpandWithLineageKeepsAffixDerivations(t *testing.T) {
 		t.Fatalf("expected lineage S:G:0 to map to streamlining, got %q", streamlineByLineage["S:G:0"])
 	}
 }
+
+func TestExpandSupportsUTF8NonASCIIFLags(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nSFX Ü Y 1\nSFX Ü 0 en .\n",
+		"1\ngut/Ü\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandSupportsLongFlags(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG long\nSFX AB Y 1\nSFX AB 0 en .\n",
+		"1\ngut/AB\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandLongFlagsDoNotCollide(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG long\nSFX AB Y 1\nSFX AB 0 en .\nSFX AC Y 1\nSFX AC 0 er .\n",
+		"1\ngut/AB\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandSupportsNumFlags(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG num\nSFX 12 Y 1\nSFX 12 0 en .\n",
+		"1\ngut/12\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandNumFlagsDoNotCollide(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG num\nSFX 1 Y 1\nSFX 1 0 en .\nSFX 12 Y 1\nSFX 12 0 er .\n",
+		"1\ngut/12\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guter": {},
+	})
+}
+
+func TestExpandSupportsFlagAliases(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nAF 1\nAF A\nSFX A Y 1\nSFX A 0 en .\n",
+		"1\ngut/1\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandSupportsContinuationClasses(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 able/B .\nSFX B Y 1\nSFX B 0 ness .\n",
+		"1\naccept/A\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("accept"), map[string]struct{}{
+		"accept":         {},
+		"acceptable":     {},
+		"acceptableness": {},
+	})
+}
+
+func TestExpandHonorsPrefixStripBehavior(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nPFX I Y 1\nPFX I p imp p\n",
+		"1\npossible/I\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("possible"), map[string]struct{}{
+		"possible":   {},
+		"impossible": {},
+	})
+}
+
+func TestSpellSupportsLongFlagCompoundRules(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG long\nCOMPOUNDRULE 1\nCOMPOUNDRULE ABAC\n",
+		"2\nnews/AB\npaper/AC\n",
+	)
+
+	if !checker.Spell("newspaper") {
+		t.Fatal("expected compound word newspaper to be recognized")
+	}
+}
+
+func TestSpellSupportsNumFlagCompoundRules(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG num\nCOMPOUNDRULE 1\nCOMPOUNDRULE 12,34\n",
+		"2\nhaus/12\nboot/34\n",
+	)
+
+	if !checker.Spell("hausboot") {
+		t.Fatal("expected compound word hausboot to be recognized")
+	}
+}
+
+func newCheckerFromInlineDict(t *testing.T, affContent, dicContent string) *Checker {
+	t.Helper()
+
+	dir := t.TempDir()
+	affPath := filepath.Join(dir, "custom.aff")
+	dicPath := filepath.Join(dir, "custom.dic")
+
+	if err := os.WriteFile(affPath, []byte(affContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dicPath, []byte(dicContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	checker, err := NewChecker(UsingDictionaryByPath(dicPath, affPath))
+	if err != nil {
+		t.Fatalf("failed to create checker: %v", err)
+	}
+
+	return checker
+}
+
+func assertFormsEqual(t *testing.T, forms []string, expected map[string]struct{}) {
+	t.Helper()
+
+	if len(forms) != len(expected) {
+		t.Fatalf("expected %d forms, got %d: %v", len(expected), len(forms), forms)
+	}
+	for _, form := range forms {
+		if _, ok := expected[form]; !ok {
+			t.Fatalf("unexpected form %q in %v", form, forms)
+		}
+	}
+}

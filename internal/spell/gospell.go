@@ -2,12 +2,14 @@ package spell
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/adrg/strutil"
 	"github.com/adrg/strutil/metrics"
@@ -276,15 +278,37 @@ func mergeInflections(existing []Inflection, inflections []Inflection) []Inflect
 	return merged
 }
 
+func readUTF8(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("dictionary data is not valid UTF-8")
+	}
+
+	return data, nil
+}
+
 // newGoSpellReader creates a speller from io.Readers for
 // Hunspell files
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
-	affix, err := newDictConfig(aff)
+	affData, err := readUTF8(aff)
 	if err != nil {
 		return nil, withUTF8Hint(err)
 	}
 
-	scanner := bufio.NewScanner(dic)
+	affix, err := newDictConfig(bytes.NewReader(affData))
+	if err != nil {
+		return nil, withUTF8Hint(err)
+	}
+
+	dicData, err := readUTF8(dic)
+	if err != nil {
+		return nil, withUTF8Hint(err)
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(dicData))
 	// get first line
 	if !scanner.Scan() {
 		return nil, withUTF8Hint(scanner.Err())
@@ -308,15 +332,9 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 		// abandonware/M	Noun: uncountable
 		line = strings.Split(line, "\t")[0]
 
-		idx := strings.Index(line, "/")
-		var baseWord string
-		var hasAffix bool
-		if idx > 0 {
-			baseWord = line[:idx]
-			hasAffix = true
-		} else {
-			baseWord = line
-			hasAffix = false
+		baseWord, _, hasAffix, splitErr := splitWordFlags(line)
+		if splitErr != nil {
+			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
 		}
 
 		derived, err = affix.expand(line, derived)
@@ -354,15 +372,26 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 	}
 
 	for _, compoundRule := range affix.CompoundRule {
-		pattern := "^"
-		for _, key := range compoundRule {
-			switch key {
-			case '(', ')', '+', '?', '*':
-				pattern += regexp.QuoteMeta(string(key))
-			default:
-				groups := affix.compoundMap[key]
-				pattern = pattern + "(" + strings.Join(groups, "|") + ")"
+		tokens, tokenErr := affix.tokenizeCompoundRule(compoundRule)
+		if tokenErr != nil {
+			tokens = make([]compoundToken, 0, len(compoundRule))
+			for _, r := range compoundRule {
+				if isCompoundOperator(r) {
+					tokens = append(tokens, compoundToken{lit: string(r)})
+					continue
+				}
+				tokens = append(tokens, compoundToken{flag: string(r), isFlag: true})
 			}
+		}
+
+		pattern := "^"
+		for _, token := range tokens {
+			if token.isFlag {
+				groups := affix.compoundMap[token.flag]
+				pattern += "(" + strings.Join(groups, "|") + ")"
+				continue
+			}
+			pattern += regexp.QuoteMeta(token.lit)
 		}
 		pattern += "$"
 

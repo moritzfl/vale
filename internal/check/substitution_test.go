@@ -337,6 +337,49 @@ func TestMorphologySubstitutionUsesAffixLineageForReplacement(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionDoesNotMatchReplacementInflections(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"de_DE",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n",
+		"2\ngut/A\nhervorragend/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "German.Gut",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"de_DE"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"gut": "hervorragend",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	text := "Das ist eine hervorragende Lösung."
+	alerts, err := rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if err != nil {
+		t.Fatalf("Failed to run rule: %v", err)
+	}
+	if len(alerts) != 0 {
+		t.Fatalf("expected 0 alerts, got %d", len(alerts))
+	}
+}
+
 func TestSubstitutionWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

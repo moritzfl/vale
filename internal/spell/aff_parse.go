@@ -22,11 +22,15 @@ func isCrossProduct(val string) (bool, error) {
 // newDictConfig reads an Hunspell AFF file.
 func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 	aff := dictConfig{
-		Flag:        "ASCII",
-		AffixMap:    make(map[rune]affix),
-		compoundMap: make(map[rune][]string),
-		CompoundMin: 3, // default in Hunspell
+		Flag:         "ASCII",
+		flagMode:     flagASCII,
+		AffixMap:     make(map[string]affix),
+		CompoundOnly: make(map[string]struct{}),
+		compoundMap:  make(map[string][]string),
+		CompoundMin:  3, // default in Hunspell
 	}
+
+	expectedAF := -1
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -71,7 +75,13 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("ONLYINCOMPOUND stanza had %d fields, expected 2", len(parts))
 			}
-			aff.CompoundOnly = parts[1]
+			flags, err := aff.parseFlags(parts[1])
+			if err != nil {
+				return nil, err
+			}
+			for _, flag := range flags {
+				aff.CompoundOnly[flag] = struct{}{}
+			}
 		case "COMPOUNDRULE":
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("COMPOUNDRULE stanza had %d fields, expected 2", len(parts))
@@ -81,17 +91,17 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 				aff.CompoundRule = make([]string, 0, val)
 			} else {
 				aff.CompoundRule = append(aff.CompoundRule, parts[1])
-				registerCompoundRuleFlags(parts[1], aff.compoundMap)
+				aff.registerCompoundRuleFlags(parts[1])
 			}
 		case "NOSUGGEST":
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("NOSUGGEST stanza had %d fields, expected 2", len(parts))
 			}
-			flag, err := parseSingleFlag(parts[1])
+			flag, err := aff.parseSingleFlag(parts[1])
 			if err != nil {
 				return nil, err
 			}
-			aff.NoSuggestFlag = string(flag)
+			aff.NoSuggestFlag = flag
 		case "WORDCHARS":
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("WORDCHAR stanza had %d fields, expected 2", len(parts))
@@ -101,7 +111,30 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("FLAG stanza had %d, expected 1", len(parts))
 			}
-			aff.Flag = parts[1]
+			mode, label, err := parseFlagMode(parts[1])
+			if err != nil {
+				return nil, err
+			}
+			aff.flagMode = mode
+			aff.Flag = label
+		case "AF":
+			if len(parts) < 2 {
+				return nil, fmt.Errorf("AF stanza had %d fields, expected at least 2", len(parts))
+			}
+
+			if expectedAF == -1 && len(parts) == 2 {
+				if count, err := strconv.Atoi(parts[1]); err == nil {
+					expectedAF = count
+					aff.flagAliases = make([][]string, 0, count)
+					continue
+				}
+			}
+
+			flags, err := aff.parseFlags(parts[1])
+			if err != nil {
+				return nil, err
+			}
+			aff.flagAliases = append(aff.flagAliases, flags)
 		case "PFX", "SFX":
 			atype := Prefix
 			if parts[0] == "SFX" {
@@ -109,8 +142,8 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 			}
 
 			sections := len(parts)
-			if sections > 4 {
-				flag, err := parseSingleFlag(parts[1])
+			if sections >= 5 {
+				flag, err := aff.parseSingleFlag(parts[1])
 				if err != nil {
 					return nil, err
 				}
@@ -138,21 +171,20 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 					}
 				}
 
-				// See #499.
-				//
-				// TODO: Is this safe to do in all cases?
-				if parts[3] == "0" {
-					parts[3] = ""
+				affixText, continuation, err := aff.splitAffixAndContinuation(parts[3])
+				if err != nil {
+					return nil, err
 				}
 
 				a.Rules = append(a.Rules, rule{
-					Strip:     strip,
-					AffixText: parts[3],
-					Pattern:   parts[4],
-					matcher:   matcher,
+					Strip:             strip,
+					AffixText:         affixText,
+					Pattern:           parts[4],
+					ContinuationFlags: continuation,
+					matcher:           matcher,
 				})
 				aff.AffixMap[flag] = a
-			} else if sections > 3 {
+			} else if sections >= 4 {
 				cross, err := isCrossProduct(parts[2])
 				if err != nil {
 					return nil, err
@@ -162,7 +194,7 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 					Type:         atype,
 					CrossProduct: cross,
 				}
-				flag, err := parseSingleFlag(parts[1])
+				flag, err := aff.parseSingleFlag(parts[1])
 				if err != nil {
 					return nil, err
 				}
@@ -173,6 +205,10 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 			//
 			// Hunspell ignores lines that don't start with a known directive.
 		}
+	}
+
+	if expectedAF >= 0 && len(aff.flagAliases) != expectedAF {
+		return nil, fmt.Errorf("AF stanza expected %d aliases, got %d", expectedAF, len(aff.flagAliases))
 	}
 
 	if err := scanner.Err(); err != nil {

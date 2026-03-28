@@ -23,7 +23,7 @@ type affix struct {
 }
 
 // expand provides all variations of a given word based on this affix rule.
-func (a affix) expand(word, lineage string, flag rune, out []derivedWord) []derivedWord {
+func (a affix) expand(word, lineage, flag string, out []derivedWord) []derivedWord {
 	for i, r := range a.Rules {
 		if r.matcher != nil && !r.matcher.MatchString(word) {
 			continue
@@ -32,14 +32,31 @@ func (a affix) expand(word, lineage string, flag rune, out []derivedWord) []deri
 		step := lineageStep(flag, a.Type, i)
 		nextLineage := appendLineage(lineage, step)
 		if a.Type == Prefix {
-			out = append(out, derivedWord{word: r.AffixText + word, lineage: nextLineage})
-			// TODO is does Strip apply to prefixes too?
+			stripWord := word
+			if r.Strip != "" {
+				if !strings.HasPrefix(word, r.Strip) {
+					continue
+				}
+				stripWord = word[len(r.Strip):]
+			}
+			out = append(out, derivedWord{
+				word:              r.AffixText + stripWord,
+				lineage:           nextLineage,
+				continuationFlags: cloneFlags(r.ContinuationFlags),
+			})
 		} else {
 			stripWord := word
-			if r.Strip != "" && strings.HasSuffix(word, r.Strip) {
+			if r.Strip != "" {
+				if !strings.HasSuffix(word, r.Strip) {
+					continue
+				}
 				stripWord = word[:len(word)-len(r.Strip)]
 			}
-			out = append(out, derivedWord{word: stripWord + r.AffixText, lineage: nextLineage})
+			out = append(out, derivedWord{
+				word:              stripWord + r.AffixText,
+				lineage:           nextLineage,
+				continuationFlags: cloneFlags(r.ContinuationFlags),
+			})
 		}
 	}
 	return out
@@ -47,10 +64,11 @@ func (a affix) expand(word, lineage string, flag rune, out []derivedWord) []deri
 
 // rule is a Affix rule.
 type rule struct {
-	Strip     string
-	AffixText string         // suffix or prefix text to add
-	Pattern   string         // original matching pattern from AFF file
-	matcher   *regexp.Regexp // matcher to see if this rule applies or not
+	Strip             string
+	AffixText         string // suffix or prefix text to add
+	Pattern           string // original matching pattern from AFF file
+	ContinuationFlags []string
+	matcher           *regexp.Regexp // matcher to see if this rule applies or not
 }
 
 // dictConfig is a partial representation of a Hunspell AFF (Affix) file.
@@ -61,31 +79,49 @@ type dictConfig struct {
 	Flag              string
 	TryChars          string
 	WordChars         string
-	CompoundOnly      string
-	AffixMap          map[rune]affix
+	CompoundOnly      map[string]struct{}
+	AffixMap          map[string]affix
 	CamelCase         int
 	CompoundMin       int64
-	compoundMap       map[rune][]string
+	compoundMap       map[string][]string
+	flagAliases       [][]string
+	flagMode          flagMode
 	NoSuggestFlag     string
 }
 
 type derivedWord struct {
-	word    string
-	lineage string
+	word              string
+	lineage           string
+	continuationFlags []string
 }
 
 type flaggedAffix struct {
-	flag  rune
+	flag  string
 	affix affix
 }
 
-func lineageStep(flag rune, typ affixType, ruleIndex int) string {
+type flagMode int
+
+const (
+	flagASCII flagMode = iota
+	flagUTF8
+	flagLong
+	flagNum
+)
+
+type compoundToken struct {
+	flag   string
+	lit    string
+	isFlag bool
+}
+
+func lineageStep(flag string, typ affixType, ruleIndex int) string {
 	prefix := "S"
 	if typ == Prefix {
 		prefix = "P"
 	}
 
-	return prefix + ":" + string(flag) + ":" + strconv.Itoa(ruleIndex)
+	return prefix + ":" + flag + ":" + strconv.Itoa(ruleIndex)
 }
 
 func appendLineage(existing, step string) string {
@@ -94,4 +130,38 @@ func appendLineage(existing, step string) string {
 	}
 
 	return existing + "|" + step
+}
+
+func cloneFlags(flags []string) []string {
+	if len(flags) == 0 {
+		return nil
+	}
+
+	out := make([]string, len(flags))
+	copy(out, flags)
+	return out
+}
+
+func mergeFlags(flags ...[]string) []string {
+	seen := make(map[string]struct{})
+	merged := make([]string, 0, 4)
+
+	for _, set := range flags {
+		for _, flag := range set {
+			if _, ok := seen[flag]; ok {
+				continue
+			}
+			seen[flag] = struct{}{}
+			merged = append(merged, flag)
+		}
+	}
+
+	return merged
+}
+
+func joinFlags(flags []string) string {
+	if len(flags) == 0 {
+		return ""
+	}
+	return strings.Join(flags, "\x1f")
 }

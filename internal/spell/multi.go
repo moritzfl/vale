@@ -80,6 +80,13 @@ type Checker struct {
 	checkers []*goSpell
 }
 
+// Inflection represents one expanded word form and the affix lineage that
+// produced it.
+type Inflection struct {
+	Form    string
+	Lineage string
+}
+
 // NewChecker creates a spell checker from multiple
 // Hunspell-compatible dictionaries.
 func NewChecker(options ...CheckerOption) (*Checker, error) {
@@ -149,29 +156,47 @@ func (m *Checker) Spell(word string) bool {
 // dictionary's affix rules. It merges forms from all loaded dictionaries
 // that recognize the provided word.
 func (m *Checker) Expand(word string) []string {
-	seen := make(map[string]struct{})
-	forms := []string{}
-
-	for _, checker := range m.checkers {
-		expanded := checker.Expand(word)
-		if len(expanded) == 1 && expanded[0] == word {
+	inflections := m.ExpandWithLineage(word)
+	seen := make(map[string]struct{}, len(inflections))
+	forms := make([]string, 0, len(inflections))
+	for _, inflection := range inflections {
+		if _, ok := seen[inflection.Form]; ok {
 			continue
 		}
-
-		for _, form := range expanded {
-			if _, ok := seen[form]; ok {
-				continue
-			}
-			seen[form] = struct{}{}
-			forms = append(forms, form)
-		}
-	}
-
-	if len(forms) == 0 {
-		return []string{word}
+		seen[inflection.Form] = struct{}{}
+		forms = append(forms, inflection.Form)
 	}
 
 	return forms
+}
+
+// ExpandWithLineage returns all inflected forms of a given word and tracks the
+// affix lineage used to derive each form.
+func (m *Checker) ExpandWithLineage(word string) []Inflection {
+	seen := make(map[string]struct{})
+	inflections := []Inflection{}
+
+	for _, checker := range m.checkers {
+		expanded := checker.ExpandWithLineage(word)
+		if len(expanded) == 1 && expanded[0].Form == word && expanded[0].Lineage == "" {
+			continue
+		}
+
+		for _, inflection := range expanded {
+			key := inflection.Form + "\x00" + inflection.Lineage
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			inflections = append(inflections, inflection)
+		}
+	}
+
+	if len(inflections) == 0 {
+		return []Inflection{{Form: word}}
+	}
+
+	return inflections
 }
 
 // Suggest returns a list of suggestions for a given word.

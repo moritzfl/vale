@@ -26,20 +26,23 @@ type affix struct {
 }
 
 // expand provides all variations of a given word based on this affix rule
-func (a affix) expand(word string, out []string) []string {
-	for _, r := range a.Rules {
+func (a affix) expand(word, lineage string, flag rune, out []derivedWord) []derivedWord {
+	for i, r := range a.Rules {
 		if r.matcher != nil && !r.matcher.MatchString(word) {
 			continue
 		}
+
+		step := lineageStep(flag, a.Type, i)
+		nextLineage := appendLineage(lineage, step)
 		if a.Type == Prefix {
-			out = append(out, r.AffixText+word)
+			out = append(out, derivedWord{word: r.AffixText + word, lineage: nextLineage})
 			// TODO is does Strip apply to prefixes too?
 		} else {
 			stripWord := word
 			if r.Strip != "" && strings.HasSuffix(word, r.Strip) {
 				stripWord = word[:len(word)-len(r.Strip)]
 			}
-			out = append(out, stripWord+r.AffixText)
+			out = append(out, derivedWord{word: stripWord + r.AffixText, lineage: nextLineage})
 		}
 	}
 	return out
@@ -69,16 +72,43 @@ type dictConfig struct {
 	NoSuggestFlag     string
 }
 
+type derivedWord struct {
+	word    string
+	lineage string
+}
+
+type flaggedAffix struct {
+	flag  rune
+	affix affix
+}
+
+func lineageStep(flag rune, typ affixType, ruleIndex int) string {
+	prefix := "S"
+	if typ == Prefix {
+		prefix = "P"
+	}
+
+	return prefix + ":" + string(flag) + ":" + strconv.Itoa(ruleIndex)
+}
+
+func appendLineage(existing, step string) string {
+	if existing == "" {
+		return step
+	}
+
+	return existing + "|" + step
+}
+
 // expand expands a word/affix using dictionary/affix rules
 //
 //	This also supports CompoundRule flags
-func (a dictConfig) expand(wordAffix string, out []string) ([]string, error) {
+func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, error) {
 	out = out[:0]
 	idx := strings.Index(wordAffix, "/")
 
 	// not found
 	if idx == -1 {
-		out = append(out, wordAffix)
+		out = append(out, derivedWord{word: wordAffix})
 		return out, nil
 	}
 	if idx == 0 || idx+1 == len(wordAffix) {
@@ -107,9 +137,9 @@ func (a dictConfig) expand(wordAffix string, out []string) ([]string, error) {
 		return out, nil
 	}
 
-	out = append(out, word)
-	prefixes := make([]affix, 0, 5)
-	suffixes := make([]affix, 0, 5)
+	out = append(out, derivedWord{word: word})
+	prefixes := make([]flaggedAffix, 0, 5)
+	suffixes := make([]flaggedAffix, 0, 5)
 	for _, key := range keyString {
 		// want keyString to []?something?
 		// then iterate over that
@@ -119,28 +149,28 @@ func (a dictConfig) expand(wordAffix string, out []string) ([]string, error) {
 			continue
 		}
 		if !af.CrossProduct {
-			out = af.expand(word, out)
+			out = af.expand(word, "", key, out)
 			continue
 		}
 		if af.Type == Prefix {
-			prefixes = append(prefixes, af)
+			prefixes = append(prefixes, flaggedAffix{flag: key, affix: af})
 		} else {
-			suffixes = append(suffixes, af)
+			suffixes = append(suffixes, flaggedAffix{flag: key, affix: af})
 		}
 	}
 
 	// expand all suffixes with out any prefixes
 	for _, suf := range suffixes {
-		out = suf.expand(word, out)
+		out = suf.affix.expand(word, "", suf.flag, out)
 	}
 	for _, pre := range prefixes {
-		prewords := pre.expand(word, nil)
+		prewords := pre.affix.expand(word, "", pre.flag, nil)
 		out = append(out, prewords...)
 
 		// now do cross product
 		for _, suf := range suffixes {
 			for _, w := range prewords {
-				out = suf.expand(w, out)
+				out = suf.affix.expand(w.word, w.lineage, suf.flag, out)
 			}
 		}
 	}

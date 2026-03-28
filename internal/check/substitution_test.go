@@ -287,6 +287,56 @@ func TestMorphologySubstitutionInflectsReplacement(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionUsesAffixLineageForReplacement(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"custom",
+		"SET ISO8859-1\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n",
+		"2\noptimize/DG\nstreamline/GD\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "Custom.Optimize",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"custom"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"optimize": "streamline",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	expected, err := subMsg(rule, 0, "optimized")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected != "streamlined" {
+		t.Fatalf("expected replacement 'streamlined', got %q", expected)
+	}
+
+	expected, err = subMsg(rule, 0, "optimizing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected != "streamlining" {
+		t.Fatalf("expected replacement 'streamlining', got %q", expected)
+	}
+}
+
 func TestSubstitutionWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

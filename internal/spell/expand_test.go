@@ -142,3 +142,50 @@ func TestExpandMergesFormsAcrossDictionaries(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandWithLineageKeepsAffixDerivations(t *testing.T) {
+	dir := t.TempDir()
+
+	affPath := filepath.Join(dir, "custom.aff")
+	dicPath := filepath.Join(dir, "custom.dic")
+
+	if err := os.WriteFile(affPath, []byte("SET ISO8859-1\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dicPath, []byte("2\noptimize/DG\nstreamline/GD\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	checker, err := NewChecker(UsingDictionaryByPath(dicPath, affPath))
+	if err != nil {
+		t.Fatalf("failed to create checker: %v", err)
+	}
+
+	optimize := checker.ExpandWithLineage("optimize")
+	if len(optimize) != 3 {
+		t.Fatalf("expected 3 optimize inflections, got %d: %#v", len(optimize), optimize)
+	}
+
+	optimizeByLineage := map[string]string{}
+	for _, inflection := range optimize {
+		optimizeByLineage[inflection.Lineage] = inflection.Form
+	}
+	if optimizeByLineage["S:D:0"] != "optimized" {
+		t.Fatalf("expected lineage S:D:0 to map to optimized, got %q", optimizeByLineage["S:D:0"])
+	}
+	if optimizeByLineage["S:G:0"] != "optimizing" {
+		t.Fatalf("expected lineage S:G:0 to map to optimizing, got %q", optimizeByLineage["S:G:0"])
+	}
+
+	streamline := checker.ExpandWithLineage("streamline")
+	streamlineByLineage := map[string]string{}
+	for _, inflection := range streamline {
+		streamlineByLineage[inflection.Lineage] = inflection.Form
+	}
+	if streamlineByLineage["S:D:0"] != "streamlined" {
+		t.Fatalf("expected lineage S:D:0 to map to streamlined, got %q", streamlineByLineage["S:D:0"])
+	}
+	if streamlineByLineage["S:G:0"] != "streamlining" {
+		t.Fatalf("expected lineage S:G:0 to map to streamlining, got %q", streamlineByLineage["S:G:0"])
+	}
+}

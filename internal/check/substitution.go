@@ -150,23 +150,34 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 		replPart := replacementParts[i]
 
 		partMap := map[string]string{strings.ToLower(srcPart): replPart}
-		srcForms := checker.Expand(srcPart)
-		replForms := checker.Expand(replPart)
+		sourceInflections := checker.ExpandWithLineage(srcPart)
+		replacementInflections := checker.ExpandWithLineage(replPart)
 
-		if len(srcForms) > 1 {
-			if len(replForms) > 1 {
-				limit := len(srcForms)
-				if len(replForms) < limit {
-					limit = len(replForms)
-				}
-				for j := 0; j < limit; j++ {
-					partMap[strings.ToLower(srcForms[j])] = replForms[j]
-				}
-			} else {
-				for _, srcForm := range srcForms {
-					partMap[strings.ToLower(srcForm)] = replPart
+		replacementByLineage := map[string]string{}
+		for _, inflection := range replacementInflections {
+			if inflection.Lineage == "" {
+				continue
+			}
+			if _, ok := replacementByLineage[inflection.Lineage]; ok {
+				continue
+			}
+			replacementByLineage[inflection.Lineage] = inflection.Form
+		}
+
+		for _, inflection := range sourceInflections {
+			key := strings.ToLower(inflection.Form)
+			if _, exists := partMap[key]; exists {
+				continue
+			}
+
+			if inflection.Lineage != "" {
+				if mapped, ok := replacementByLineage[inflection.Lineage]; ok {
+					partMap[key] = mapped
+					continue
 				}
 			}
+
+			partMap[key] = replPart
 		}
 
 		maps[i] = partMap

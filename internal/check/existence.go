@@ -8,6 +8,7 @@ import (
 
 	"github.com/errata-ai/vale/v3/internal/core"
 	"github.com/errata-ai/vale/v3/internal/nlp"
+	"github.com/errata-ai/vale/v3/internal/spell"
 )
 
 // Existence checks for the present of Tokens.
@@ -23,11 +24,55 @@ type Existence struct {
 	IgnoreCase bool
 	Nonword    bool
 	Vocab      bool
+	Morphology bool
+
+	Dictionaries []string
+	Aff          string
+	Dic          string
+	Dicpath      string
+	path         string
+}
+
+func (e *Existence) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, error) {
+	if !e.Morphology {
+		return nil, nil
+	}
+
+	dictionaries := cloneStrings(e.Dictionaries)
+	cacheKey := morphologyCheckerKey(
+		cfg,
+		e.path,
+		e.Aff,
+		e.Dic,
+		e.Dicpath,
+		e.Append,
+		dictionaries,
+	)
+	if cached, ok := morphologyCheckerCache.Load(cacheKey); ok {
+		return cached.(*spell.Checker), nil
+	}
+
+	checker, err := makeSpeller(&Spelling{
+		Aff:          e.Aff,
+		Dic:          e.Dic,
+		Dicpath:      e.Dicpath,
+		Dictionaries: dictionaries,
+		Append:       e.Append,
+	}, cfg, e.path)
+	if err != nil {
+		return nil, err
+	}
+
+	if cached, loaded := morphologyCheckerCache.LoadOrStore(cacheKey, checker); loaded {
+		return cached.(*spell.Checker), nil
+	}
+
+	return checker, nil
 }
 
 // NewExistence creates a new `Rule` that extends `Existence`.
 func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, error) {
-	rule := Existence{Vocab: true}
+	rule := Existence{Vocab: true, path: path}
 
 	err := decodeRule(generic, &rule)
 	if err != nil {
@@ -58,6 +103,20 @@ func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, 
 			parsed = append(parsed, token)
 		}
 	}
+
+	checker, err := rule.makeMorphologyChecker(cfg)
+	if err != nil {
+		return rule, err
+	}
+
+	if checker != nil {
+		expanded := make([]string, 0, len(parsed))
+		for _, token := range parsed {
+			expanded = append(expanded, expandForMorphology(token, checker))
+		}
+		parsed = expanded
+	}
+
 	regex = fmt.Sprintf(regex, strings.Join(parsed, "|"))
 
 	re, err = regexp2.CompileStd(regex)

@@ -3,6 +3,7 @@ package spell
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,28 @@ func TestExpandGermanFileNotFound(t *testing.T) {
 	_, err := newGoSpell("/nonexistent/de_DE.aff", "/nonexistent/de_DE.dic")
 	if err == nil {
 		t.Error("Expected error for nonexistent files")
+	}
+}
+
+func TestExpandLoadFailureMentionsUTF8Encoding(t *testing.T) {
+	dir := t.TempDir()
+
+	affPath := filepath.Join(dir, "invalid.aff")
+	dicPath := filepath.Join(dir, "invalid.dic")
+
+	if err := os.WriteFile(affPath, []byte("TRY\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dicPath, []byte("1\nfoo\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := newGoSpell(affPath, dicPath)
+	if err == nil {
+		t.Fatal("expected invalid dictionary to return an error")
+	}
+	if !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("expected UTF-8 hint in error, got %v", err)
 	}
 }
 

@@ -33,6 +33,14 @@ type dictionary struct {
 	aff string
 }
 
+func withUTF8Hint(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("%w; ensure the dictionary is UTF-8 encoded", err)
+}
+
 // inputConversion does any character substitution before checking
 //
 //	This is based on the ICONV stanza
@@ -227,13 +235,13 @@ func mergeForms(existing []string, forms []string) []string {
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 	affix, err := newDictConfig(aff)
 	if err != nil {
-		return nil, err
+		return nil, withUTF8Hint(err)
 	}
 
 	scanner := bufio.NewScanner(dic)
 	// get first line
 	if !scanner.Scan() {
-		return nil, scanner.Err()
+		return nil, withUTF8Hint(scanner.Err())
 	}
 
 	gs := goSpell{
@@ -266,7 +274,7 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 
 		words, err = affix.expand(line, words)
 		if err != nil {
-			return nil, fmt.Errorf("unable to process %q: %s", line, err.Error())
+			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %s", line, err.Error()))
 		}
 
 		if len(words) == 0 {
@@ -285,7 +293,7 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 	}
 
 	if err = scanner.Err(); err != nil {
-		return nil, err
+		return nil, withUTF8Hint(err)
 	}
 
 	for _, compoundRule := range affix.CompoundRule {

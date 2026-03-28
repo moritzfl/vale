@@ -83,8 +83,9 @@ type Checker struct {
 // Inflection represents one expanded word form and the affix lineage that
 // produced it.
 type Inflection struct {
-	Form    string
-	Lineage string
+	Form       string
+	Lineage    string
+	LineageKey string
 }
 
 // NewChecker creates a spell checker from multiple

@@ -154,14 +154,29 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 		replacementInflections := checker.ExpandWithLineage(replPart)
 
 		replacementByLineage := map[string]string{}
+		replacementByLineageKey := map[string]string{}
+		ambiguousLineageKeys := map[string]struct{}{}
 		for _, inflection := range replacementInflections {
 			if inflection.Lineage == "" {
+				if inflection.LineageKey == "" {
+					continue
+				}
+			} else if _, ok := replacementByLineage[inflection.Lineage]; !ok {
+				replacementByLineage[inflection.Lineage] = inflection.Form
+			}
+
+			if inflection.LineageKey == "" {
 				continue
 			}
-			if _, ok := replacementByLineage[inflection.Lineage]; ok {
+			if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; ambiguous {
 				continue
 			}
-			replacementByLineage[inflection.Lineage] = inflection.Form
+			if existing, ok := replacementByLineageKey[inflection.LineageKey]; ok && existing != inflection.Form {
+				delete(replacementByLineageKey, inflection.LineageKey)
+				ambiguousLineageKeys[inflection.LineageKey] = struct{}{}
+				continue
+			}
+			replacementByLineageKey[inflection.LineageKey] = inflection.Form
 		}
 
 		for _, inflection := range sourceInflections {
@@ -174,6 +189,14 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 				if mapped, ok := replacementByLineage[inflection.Lineage]; ok {
 					partMap[key] = mapped
 					continue
+				}
+			}
+			if inflection.LineageKey != "" {
+				if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; !ambiguous {
+					if mapped, ok := replacementByLineageKey[inflection.LineageKey]; ok {
+						partMap[key] = mapped
+						continue
+					}
 				}
 			}
 

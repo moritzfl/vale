@@ -1,6 +1,10 @@
 package spell
 
 func (a dictConfig) expandFlags(word, lineage string, flags []string, out []derivedWord) []derivedWord {
+	return a.expandFlagsWithKey(word, lineage, "", flags, out)
+}
+
+func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags []string, out []derivedWord) []derivedWord {
 	prefixes := make([]flaggedAffix, 0, 5)
 	suffixes := make([]flaggedAffix, 0, 5)
 	for _, key := range flags {
@@ -10,7 +14,7 @@ func (a dictConfig) expandFlags(word, lineage string, flags []string, out []deri
 			continue
 		}
 		if !af.CrossProduct {
-			out = af.expand(word, lineage, key, out)
+			out = af.expand(word, lineage, lineageKey, key, out)
 			continue
 		}
 		if af.Type == Prefix {
@@ -21,15 +25,15 @@ func (a dictConfig) expandFlags(word, lineage string, flags []string, out []deri
 	}
 
 	for _, suf := range suffixes {
-		out = suf.affix.expand(word, lineage, suf.flag, out)
+		out = suf.affix.expand(word, lineage, lineageKey, suf.flag, out)
 	}
 	for _, pre := range prefixes {
-		prewords := pre.affix.expand(word, lineage, pre.flag, nil)
+		prewords := pre.affix.expand(word, lineage, lineageKey, pre.flag, nil)
 		out = append(out, prewords...)
 
 		for _, suf := range suffixes {
 			for _, w := range prewords {
-				derived := suf.affix.expand(w.word, w.lineage, suf.flag, nil)
+				derived := suf.affix.expand(w.word, w.lineage, w.lineageKey, suf.flag, nil)
 				for i := range derived {
 					derived[i].continuationFlags = mergeFlags(
 						w.continuationFlags,
@@ -83,6 +87,7 @@ func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, 
 	stateQueue := []derivedWord{{
 		word:              word,
 		lineage:           "",
+		lineageKey:        "",
 		continuationFlags: keys,
 	}}
 	seenStates := map[string]struct{}{
@@ -93,9 +98,19 @@ func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, 
 		current := stateQueue[0]
 		stateQueue = stateQueue[1:]
 
-		expanded := a.expandFlags(current.word, current.lineage, current.continuationFlags, nil)
+		expanded := a.expandFlagsWithKey(
+			current.word,
+			current.lineage,
+			current.lineageKey,
+			current.continuationFlags,
+			nil,
+		)
 		for _, item := range expanded {
-			out = append(out, derivedWord{word: item.word, lineage: item.lineage})
+			out = append(out, derivedWord{
+				word:       item.word,
+				lineage:    item.lineage,
+				lineageKey: item.lineageKey,
+			})
 
 			if len(item.continuationFlags) == 0 {
 				continue

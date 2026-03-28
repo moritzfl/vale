@@ -351,8 +351,9 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 		for _, item := range derived {
 			words = append(words, item.word)
 			inflections = append(inflections, Inflection{
-				Form:    item.word,
-				Lineage: item.lineage,
+				Form:       item.word,
+				Lineage:    item.lineage,
+				LineageKey: item.lineageKey,
 			})
 
 			gs.dict[item.word] = struct{}{}

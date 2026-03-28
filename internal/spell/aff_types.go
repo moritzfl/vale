@@ -23,14 +23,16 @@ type affix struct {
 }
 
 // expand provides all variations of a given word based on this affix rule.
-func (a affix) expand(word, lineage, flag string, out []derivedWord) []derivedWord {
+func (a affix) expand(word, lineage, lineageKey, flag string, out []derivedWord) []derivedWord {
 	for i, r := range a.Rules {
 		if r.matcher != nil && !r.matcher.MatchString(word) {
 			continue
 		}
 
 		step := lineageStep(flag, a.Type, i)
+		keyStep := lineageKeyStep(flag, a.Type, r)
 		nextLineage := appendLineage(lineage, step)
+		nextLineageKey := appendLineage(lineageKey, keyStep)
 		if a.Type == Prefix {
 			stripWord := word
 			if r.Strip != "" {
@@ -42,6 +44,7 @@ func (a affix) expand(word, lineage, flag string, out []derivedWord) []derivedWo
 			out = append(out, derivedWord{
 				word:              r.AffixText + stripWord,
 				lineage:           nextLineage,
+				lineageKey:        nextLineageKey,
 				continuationFlags: cloneFlags(r.ContinuationFlags),
 			})
 		} else {
@@ -55,6 +58,7 @@ func (a affix) expand(word, lineage, flag string, out []derivedWord) []derivedWo
 			out = append(out, derivedWord{
 				word:              stripWord + r.AffixText,
 				lineage:           nextLineage,
+				lineageKey:        nextLineageKey,
 				continuationFlags: cloneFlags(r.ContinuationFlags),
 			})
 		}
@@ -92,6 +96,7 @@ type dictConfig struct {
 type derivedWord struct {
 	word              string
 	lineage           string
+	lineageKey        string
 	continuationFlags []string
 }
 
@@ -122,6 +127,15 @@ func lineageStep(flag string, typ affixType, ruleIndex int) string {
 	}
 
 	return prefix + ":" + flag + ":" + strconv.Itoa(ruleIndex)
+}
+
+func lineageKeyStep(flag string, typ affixType, r rule) string {
+	prefix := "S"
+	if typ == Prefix {
+		prefix = "P"
+	}
+
+	return prefix + ":" + flag + ":" + ruleFragmentKey(r.Strip) + ":" + ruleFragmentKey(r.AffixText)
 }
 
 func appendLineage(existing, step string) string {
@@ -164,4 +178,18 @@ func joinFlags(flags []string) string {
 		return ""
 	}
 	return strings.Join(flags, "\x1f")
+}
+
+// ruleFragmentKey captures a small, language-agnostic signature for one
+// strip/add edge so fallback lineage matching can reuse the same Hunspell
+// flag path without depending on per-dictionary rule indexes.
+func ruleFragmentKey(raw string) string {
+	if raw == "" {
+		return "0"
+	}
+
+	fragment := []rune(strings.ToLower(raw))
+	last := fragment[len(fragment)-1]
+
+	return strconv.Itoa(len(fragment)) + ":" + string(last)
 }

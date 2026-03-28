@@ -380,6 +380,66 @@ func TestMorphologySubstitutionDoesNotMatchReplacementInflections(t *testing.T) 
 	}
 }
 
+func TestMorphologySubstitutionUsesRussianLineageIdentityForReplacement(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"ru_RU",
+		strings.Join([]string{
+			"SET UTF-8",
+			"SFX A Y 6",
+			"SFX A ый ое ый",
+			"SFX A ый ая ый",
+			"SFX A ий ее ий",
+			"SFX A ий ая ий",
+			"SFX A й е ый",
+			"SFX A й е ий",
+			"",
+		}, "\n"),
+		"2\nхороший/A\nотличный/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "Russian.Good",
+		"level":        "warning",
+		"message":      "Используйте '%s' вместо '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"ru_RU"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"хороший": "отличный",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	cases := map[string]string{
+		"хорошая": "отличная",
+		"хорошее": "отличное",
+		"хорошие": "отличные",
+	}
+
+	for observed, expected := range cases {
+		actual, msgErr := subMsg(rule, 0, observed)
+		if msgErr != nil {
+			t.Fatalf("Failed to build replacement for %q: %v", observed, msgErr)
+		}
+		if actual != expected {
+			t.Fatalf("expected replacement %q for %q, got %q", expected, observed, actual)
+		}
+	}
+}
+
 func TestSubstitutionWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

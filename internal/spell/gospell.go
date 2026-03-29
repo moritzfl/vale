@@ -396,11 +396,8 @@ func cleanDictionaryLine(raw string) string {
 	}
 
 	end := len(fields)
-	for end > 0 && looksLikeMorphField(fields[end-1]) {
+	for end > 1 && looksLikeMorphField(fields[end-1]) {
 		end--
-	}
-	if end == 0 {
-		return ""
 	}
 
 	return strings.Join(fields[:end], " ")

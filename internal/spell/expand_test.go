@@ -324,6 +324,21 @@ func TestExpandIgnoresDictionaryCommentLines(t *testing.T) {
 	})
 }
 
+func TestExpandKeepsColonHeadwords(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\n",
+		"1\nfoo:bar\n",
+	)
+
+	if !checker.Spell("foo:bar") {
+		t.Fatal("expected colon-containing headword to be retained")
+	}
+
+	assertFormsEqual(t, checker.Expand("foo:bar"), map[string]struct{}{
+		"foo:bar": {},
+	})
+}
+
 func TestExpandAcceptsTrailingSlashEntriesWithoutFlags(t *testing.T) {
 	checker := newCheckerFromInlineDict(t,
 		"SET UTF-8\n",

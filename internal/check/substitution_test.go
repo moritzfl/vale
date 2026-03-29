@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/errata-ai/vale/v3/internal/core"
@@ -530,6 +531,76 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	}
 	if checkerA != checkerB {
 		t.Fatal("expected morphology checker to be reused across rules")
+	}
+}
+
+func TestMorphologyCheckerConcurrentCreation(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(t, dictDir, "de_DE", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "German.Gut",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"de_DE"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"gut": "hervorragend",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	const workers = 16
+	results := make([]any, workers)
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+			<-start
+
+			checker, checkerErr := rule.makeMorphologyChecker(cfg)
+			if checkerErr != nil {
+				errs <- checkerErr
+				return
+			}
+			results[idx] = checker
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for checkerErr := range errs {
+		if checkerErr != nil {
+			t.Fatalf("unexpected checker creation error: %v", checkerErr)
+		}
+	}
+
+	first := results[0]
+	if first == nil {
+		t.Fatal("expected non-nil checker")
+	}
+	for i := 1; i < workers; i++ {
+		if results[i] != first {
+			t.Fatalf("expected checker %d to match first cached checker", i)
+		}
 	}
 }
 

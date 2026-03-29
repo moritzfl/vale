@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"golang.org/x/exp/maps"
 
@@ -12,10 +11,6 @@ import (
 	"github.com/errata-ai/vale/v3/internal/core"
 	"github.com/errata-ai/vale/v3/internal/nlp"
 	"github.com/errata-ai/vale/v3/internal/spell"
-)
-
-var (
-	morphologyCheckerCache sync.Map
 )
 
 type morphologyReplacement struct {
@@ -281,27 +276,16 @@ func (s *Substitution) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, 
 		s.Append,
 		dictionaries,
 	)
-	if cached, ok := morphologyCheckerCache.Load(cacheKey); ok {
-		return cached.(*spell.Checker), nil
-	}
-
-	checker, err := makeSpeller(&Spelling{
-		Aff:          s.Aff,
-		Dic:          s.Dic,
-		Dicpath:      s.Dicpath,
-		Dictionaries: dictionaries,
-		Append:       s.Append,
-		lazyMorph:    true,
-	}, cfg, s.path)
-	if err != nil {
-		return nil, err
-	}
-
-	if cached, loaded := morphologyCheckerCache.LoadOrStore(cacheKey, checker); loaded {
-		return cached.(*spell.Checker), nil
-	}
-
-	return checker, nil
+	return loadMorphologyChecker(cacheKey, func() (*spell.Checker, error) {
+		return makeSpeller(&Spelling{
+			Aff:          s.Aff,
+			Dic:          s.Dic,
+			Dicpath:      s.Dicpath,
+			Dictionaries: dictionaries,
+			Append:       s.Append,
+			lazyMorph:    true,
+		}, cfg, s.path)
+	})
 }
 
 func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error) {

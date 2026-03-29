@@ -48,27 +48,16 @@ func (e *Existence) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, err
 		e.Append,
 		dictionaries,
 	)
-	if cached, ok := morphologyCheckerCache.Load(cacheKey); ok {
-		return cached.(*spell.Checker), nil
-	}
-
-	checker, err := makeSpeller(&Spelling{
-		Aff:          e.Aff,
-		Dic:          e.Dic,
-		Dicpath:      e.Dicpath,
-		Dictionaries: dictionaries,
-		Append:       e.Append,
-		lazyMorph:    true,
-	}, cfg, e.path)
-	if err != nil {
-		return nil, err
-	}
-
-	if cached, loaded := morphologyCheckerCache.LoadOrStore(cacheKey, checker); loaded {
-		return cached.(*spell.Checker), nil
-	}
-
-	return checker, nil
+	return loadMorphologyChecker(cacheKey, func() (*spell.Checker, error) {
+		return makeSpeller(&Spelling{
+			Aff:          e.Aff,
+			Dic:          e.Dic,
+			Dicpath:      e.Dicpath,
+			Dictionaries: dictionaries,
+			Append:       e.Append,
+			lazyMorph:    true,
+		}, cfg, e.path)
+	})
 }
 
 // NewExistence creates a new `Rule` that extends `Existence`.

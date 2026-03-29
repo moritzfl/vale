@@ -85,104 +85,6 @@ func NewSubstitution(cfg *core.Config, generic baseCheck, path string) (*Substit
 	return rule, nil
 }
 
-// expandForMorphology expands a word to all its inflected forms using the
-// dictionary. If the word has no morphological variations, it returns the
-// word itself.
-func expandForMorphology(word string, gs *spell.Checker) string {
-	if gs == nil {
-		return word
-	}
-
-	if options, ok := splitMorphAlternatives(word); ok && len(options) > 1 {
-		forms := []string{}
-		seen := map[string]struct{}{}
-		expanded := false
-
-		for _, option := range options {
-			optionForms := gs.Expand(option)
-			if len(optionForms) > 1 {
-				expanded = true
-			}
-			if len(optionForms) == 0 {
-				optionForms = []string{option}
-			}
-
-			for _, form := range optionForms {
-				if _, exists := seen[form]; exists {
-					continue
-				}
-				seen[form] = struct{}{}
-				forms = append(forms, form)
-			}
-		}
-
-		if expanded {
-			return toAlternation(forms)
-		}
-
-		return word
-	}
-
-	parts := strings.Split(word, " ")
-	if len(parts) > 1 {
-		result := []string{}
-		expanded := false
-		for _, p := range parts {
-			if options, ok := splitMorphAlternatives(p); ok && len(options) > 1 {
-				optionForms := []string{}
-				seen := map[string]struct{}{}
-				optionExpanded := false
-				for _, option := range options {
-					forms := gs.Expand(option)
-					if len(forms) > 1 {
-						optionExpanded = true
-					}
-					if len(forms) == 0 {
-						forms = []string{option}
-					}
-
-					for _, form := range forms {
-						if _, exists := seen[form]; exists {
-							continue
-						}
-						seen[form] = struct{}{}
-						optionForms = append(optionForms, form)
-					}
-				}
-
-				if optionExpanded {
-					result = append(result, toAlternation(optionForms))
-					expanded = true
-					continue
-				}
-			}
-
-			pForms := gs.Expand(p)
-			if len(pForms) > 1 {
-				result = append(result, toAlternation(pForms))
-				expanded = true
-			} else {
-				result = append(result, p)
-			}
-		}
-		if expanded {
-			return strings.Join(result, " ")
-		}
-		return word
-	}
-
-	forms := gs.Expand(word)
-	if len(forms) <= 1 {
-		return word
-	}
-
-	return toAlternation(forms)
-}
-
-func toAlternation(forms []string) string {
-	return "(?:" + strings.Join(forms, "|") + ")"
-}
-
 func cloneStrings(values []string) []string {
 	cloned := make([]string, len(values))
 	copy(cloned, values)
@@ -240,6 +142,9 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 	for i := range sourceParts {
 		srcPart := sourceParts[i]
 		replPart := replacementParts[i]
+		if markedBody, ok := unwrapMarkedMorphGroup(srcPart); ok {
+			srcPart = markedBody
+		}
 
 		sourceAlternatives := []string{srcPart}
 		if options, ok := splitMorphAlternatives(srcPart); ok && len(options) > 1 {
@@ -588,43 +493,5 @@ func subMsg(s *Substitution, index int, observed string) (string, error) {
 //
 // https://vale.sh/docs/checks/substitution#multiple-suggestions
 func getOptions(match string) []string {
-	options := []string{}
-
-	// We want to ignore any escaped pipes, so make a temporary substitution:
-	//
-	// TODO: Add support for `.Split` in `regexp2`.
-	temp := strings.ReplaceAll(match, `\|`, "PIPE")
-
-	for _, option := range strings.Split(temp, "|") {
-		if option != "" {
-			options = append(options, strings.ReplaceAll(option, "PIPE", `|`))
-		}
-	}
-
-	return options
-}
-
-func splitMorphAlternatives(pattern string) ([]string, bool) {
-	if !strings.Contains(pattern, "|") {
-		return []string{pattern}, true
-	}
-	// Keep full regex patterns untouched. We only expand literal alternations.
-	if strings.Contains(pattern, `\|`) || strings.ContainsAny(pattern, `()[]{}*+?^$\`) {
-		return nil, false
-	}
-
-	options := getOptions(pattern)
-	if len(options) <= 1 {
-		return nil, false
-	}
-	for _, option := range options {
-		if option == "" {
-			return nil, false
-		}
-		if strings.ContainsAny(option, `()[]{}*+?^$\`) {
-			return nil, false
-		}
-	}
-
-	return options, true
+	return splitEscapedAlternatives(match)
 }

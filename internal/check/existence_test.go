@@ -126,6 +126,83 @@ func TestExistenceWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 	}
 }
 
+func TestExistenceMorphologyExpandsLiteralAlternation(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"3\nsetting/A\noption/A\npreference/A\n",
+	)
+
+	rule, err := makeExistenceWithConfig(cfg, baseCheck{
+		"tokens":       []string{"setting|option"},
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, text := range []string{
+		"These settings are configurable.",
+		"These options are configurable.",
+	} {
+		alerts, runErr := rule.Run(nlp.NewBlock("", text, ""), &core.File{}, cfg)
+		if runErr != nil {
+			t.Fatalf("run failed for %q: %v", text, runErr)
+		}
+		if len(alerts) != 1 {
+			t.Fatalf("expected 1 alert for %q, got %d", text, len(alerts))
+		}
+	}
+}
+
+func TestExistenceMorphologyExpandsMarkedRegexGroup(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"3\nsetting/A\noption/A\npreference/A\n",
+	)
+
+	rule, err := makeExistenceWithConfig(cfg, baseCheck{
+		"tokens":       []string{"(?<morph_term>setting|option)"},
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alerts, runErr := rule.Run(
+		nlp.NewBlock("", "These settings are configurable.", ""),
+		&core.File{},
+		cfg,
+	)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+
 func FuzzExistenceInit(f *testing.F) {
 	f.Add("hello")
 	f.Fuzz(func(_ *testing.T, s string) {

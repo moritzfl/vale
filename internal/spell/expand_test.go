@@ -360,6 +360,33 @@ func TestExpandSupportsContinuationClasses(t *testing.T) {
 	})
 }
 
+func TestExpandSupportsLazyMorphologyMode(t *testing.T) {
+	checker := newCheckerFromInlineDictWithOptions(
+		t,
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 able/B .\nSFX B Y 1\nSFX B 0 ness .\n",
+		"1\naccept/A\n",
+		WithLazyMorphology(),
+	)
+
+	// Lazy mode keeps only dictionary headwords in the spell map.
+	if got := len(checker.Dict(0)); got != 1 {
+		t.Fatalf("expected 1 headword in lazy mode, got %d", got)
+	}
+
+	assertFormsEqual(t, checker.Expand("accept"), map[string]struct{}{
+		"accept":         {},
+		"acceptable":     {},
+		"acceptableness": {},
+	})
+
+	// After first expansion, inflected lookups should resolve via cached lemma.
+	assertFormsEqual(t, checker.Expand("acceptable"), map[string]struct{}{
+		"accept":         {},
+		"acceptable":     {},
+		"acceptableness": {},
+	})
+}
+
 func TestExpandHonorsPrefixStripBehavior(t *testing.T) {
 	checker := newCheckerFromInlineDict(t,
 		"SET UTF-8\nPFX I Y 1\nPFX I p imp p\n",
@@ -406,6 +433,14 @@ func TestSpellSupportsUTF8EmojiCompoundRules(t *testing.T) {
 }
 
 func newCheckerFromInlineDict(t *testing.T, affContent, dicContent string) *Checker {
+	return newCheckerFromInlineDictWithOptions(t, affContent, dicContent)
+}
+
+func newCheckerFromInlineDictWithOptions(
+	t *testing.T,
+	affContent, dicContent string,
+	options ...CheckerOption,
+) *Checker {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -419,7 +454,8 @@ func newCheckerFromInlineDict(t *testing.T, affContent, dicContent string) *Chec
 		t.Fatal(err)
 	}
 
-	checker, err := NewChecker(UsingDictionaryByPath(dicPath, affPath))
+	checkerOptions := append([]CheckerOption{UsingDictionaryByPath(dicPath, affPath)}, options...)
+	checker, err := NewChecker(checkerOptions...)
 	if err != nil {
 		t.Fatalf("failed to create checker: %v", err)
 	}

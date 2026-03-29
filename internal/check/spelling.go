@@ -38,6 +38,7 @@ type Spelling struct {
 	gs           *spell.Checker
 	Custom       bool
 	Append       bool
+	lazyMorph    bool
 }
 
 func addFilters(s *Spelling, generic baseCheck, _ *core.Config) error {
@@ -217,11 +218,15 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 	var options []spell.CheckerOption
 	var found bool
 
+	if s.lazyMorph {
+		options = append(options, spell.WithLazyMorphology())
+	}
+
 	affloc := core.FindAsset(cfg, s.Aff)
 	dicloc := core.FindAsset(cfg, s.Dic)
 
 	if system.FileExists(affloc) && system.FileExists(dicloc) {
-		return spell.NewChecker(spell.UsingDictionaryByPath(dicloc, affloc))
+		return spell.NewChecker(append(options, spell.UsingDictionaryByPath(dicloc, affloc))...)
 	}
 
 	options = append(options, spell.WithDefault(s.Append))

@@ -291,6 +291,7 @@ func (s *Substitution) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, 
 		Dicpath:      s.Dicpath,
 		Dictionaries: dictionaries,
 		Append:       s.Append,
+		lazyMorph:    true,
 	}, cfg, s.path)
 	if err != nil {
 		return nil, err

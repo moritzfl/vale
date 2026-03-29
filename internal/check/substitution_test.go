@@ -533,6 +533,58 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	}
 }
 
+func TestMorphologyCheckerUsesLazyDictionaryLoading(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
+		"1\nutilize/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.Utilize",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"utilize": "use",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	checker, err := rule.makeMorphologyChecker(cfg)
+	if err != nil {
+		t.Fatalf("failed to get morphology checker: %v", err)
+	}
+
+	// Terminology morphology should avoid eager full-dictionary expansion.
+	if got := len(checker.Dict(0)); got != 1 {
+		t.Fatalf("expected 1 headword in lazy morphology mode, got %d", got)
+	}
+
+	alerts, err := rule.Run(nlp.NewBlock("We utilized this method.", "We utilized this method.", "text"), &core.File{}, cfg)
+	if err != nil {
+		t.Fatalf("failed to run rule: %v", err)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+}
+
 func TestMorphologySubstitutionRequiresExplicitDictionariesLikeSpelling(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

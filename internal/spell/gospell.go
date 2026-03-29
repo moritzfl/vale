@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/adrg/strutil"
@@ -26,6 +27,11 @@ type goSpell struct {
 	ireplacer         *strings.Replacer
 	compounds         []*regexp.Regexp
 	splitter          *splitter
+	affix             *dictConfig
+	lazyMorphology    bool
+	lazyBaseEntries   map[string][]lazyDictionaryEntry
+	lazyLowerToBase   map[string]string
+	lazyMu            sync.Mutex
 	lemmaMap          map[string]string
 	baseToForms       map[string][]string
 	baseToInflections map[string][]Inflection
@@ -34,6 +40,15 @@ type goSpell struct {
 type dictionary struct {
 	dic string
 	aff string
+}
+
+type lazyDictionaryEntry struct {
+	line     string
+	hasAffix bool
+}
+
+type goSpellLoadOptions struct {
+	lazyMorphology bool
 }
 
 func withUTF8Hint(err error) error {
@@ -208,6 +223,14 @@ func (s *goSpell) Expand(word string) []string {
 // ExpandWithLineage returns all inflected forms together with their affix
 // derivation lineage.
 func (s *goSpell) ExpandWithLineage(word string) []Inflection {
+	if s.lazyMorphology {
+		return s.expandWithLineageLazy(word)
+	}
+
+	return s.expandWithLineageEager(word)
+}
+
+func (s *goSpell) expandWithLineageEager(word string) []Inflection {
 	if s.lemmaMap == nil {
 		return []Inflection{{Form: word}}
 	}
@@ -228,6 +251,87 @@ func (s *goSpell) ExpandWithLineage(word string) []Inflection {
 	}
 
 	return []Inflection{{Form: word}}
+}
+
+func (s *goSpell) expandWithLineageLazy(word string) []Inflection {
+	if s.affix == nil {
+		return []Inflection{{Form: word}}
+	}
+
+	s.lazyMu.Lock()
+	defer s.lazyMu.Unlock()
+
+	base, ok := s.resolveLazyBase(word)
+	if !ok {
+		return []Inflection{{Form: word}}
+	}
+
+	if inflections, ok := s.baseToInflections[base]; ok {
+		return inflections
+	}
+
+	entries, ok := s.lazyBaseEntries[base]
+	if !ok {
+		return []Inflection{{Form: word}}
+	}
+
+	inflections := []Inflection{}
+	seen := map[string]struct{}{}
+	for _, entry := range entries {
+		derived, err := s.affix.expand(entry.line, nil)
+		if err != nil {
+			return []Inflection{{Form: word}}
+		}
+
+		for _, item := range derived {
+			inflection := Inflection{
+				Form:       item.word,
+				Lineage:    item.lineage,
+				LineageKey: item.lineageKey,
+			}
+			key := inflection.Form + "\x00" + inflection.Lineage
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			inflections = append(inflections, inflection)
+
+			if entry.hasAffix {
+				s.lemmaMap[item.word] = base
+			} else if _, exists := s.lemmaMap[item.word]; !exists {
+				s.lemmaMap[item.word] = base
+			}
+		}
+	}
+
+	if len(inflections) == 0 {
+		inflections = []Inflection{{Form: base}}
+	}
+
+	s.baseToInflections[base] = inflections
+	lower := strings.ToLower(base)
+	if _, ok := s.baseToInflections[lower]; !ok {
+		s.baseToInflections[lower] = inflections
+	}
+	return inflections
+}
+
+func (s *goSpell) resolveLazyBase(word string) (string, bool) {
+	if base := s.lemmaMap[word]; base != "" {
+		return base, true
+	}
+
+	lower := strings.ToLower(word)
+	if base := s.lemmaMap[lower]; base != "" {
+		return base, true
+	}
+
+	if _, ok := s.lazyBaseEntries[word]; ok {
+		return word, true
+	}
+
+	base, ok := s.lazyLowerToBase[lower]
+	return base, ok
 }
 
 func mergeForms(existing []string, forms []string) []string {
@@ -330,6 +434,10 @@ func readUTF8(r io.Reader) ([]byte, error) {
 // newGoSpellReader creates a speller from io.Readers for
 // Hunspell files
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
+	return newGoSpellReaderWithOptions(aff, dic, goSpellLoadOptions{})
+}
+
+func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*goSpell, error) {
 	affData, err := readUTF8(aff)
 	if err != nil {
 		return nil, withUTF8Hint(err)
@@ -356,6 +464,10 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 		dict:              make(map[string]struct{}),
 		compounds:         make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
 		splitter:          newSplitter(affix.WordChars),
+		affix:             affix,
+		lazyMorphology:    opts.lazyMorphology,
+		lazyBaseEntries:   make(map[string][]lazyDictionaryEntry),
+		lazyLowerToBase:   make(map[string]string),
 		lemmaMap:          make(map[string]string),
 		baseToForms:       make(map[string][]string),
 		baseToInflections: make(map[string][]Inflection),
@@ -368,9 +480,42 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 			continue
 		}
 
-		baseWord, _, hasAffix, splitErr := affix.splitWordFlags(line)
+		baseWord, keyString, hasAffix, splitErr := affix.splitWordFlags(line)
 		if splitErr != nil {
 			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
+		}
+		if opts.lazyMorphology {
+			gs.dict[baseWord] = struct{}{}
+			if _, ok := gs.lemmaMap[baseWord]; !ok {
+				gs.lemmaMap[baseWord] = baseWord
+			}
+			lowerBase := strings.ToLower(baseWord)
+			if _, ok := gs.lazyLowerToBase[lowerBase]; !ok {
+				gs.lazyLowerToBase[lowerBase] = baseWord
+			}
+			gs.lazyBaseEntries[baseWord] = append(gs.lazyBaseEntries[baseWord], lazyDictionaryEntry{
+				line:     line,
+				hasAffix: hasAffix,
+			})
+
+			if hasAffix {
+				keys, keyErr := affix.resolveDictionaryFlags(keyString)
+				if keyErr != nil {
+					return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, keyErr))
+				}
+
+				for _, key := range keys {
+					if _, ok := affix.CompoundOnly[key]; ok {
+						continue
+					}
+					if _, ok := affix.compoundMap[key]; !ok {
+						continue
+					}
+					affix.compoundMap[key] = append(affix.compoundMap[key], baseWord)
+				}
+			}
+
+			continue
 		}
 
 		derived, err = affix.expand(line, derived)
@@ -409,32 +554,9 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 	}
 
 	for _, compoundRule := range affix.CompoundRule {
-		tokens, tokenErr := affix.tokenizeCompoundRule(compoundRule)
-		if tokenErr != nil {
-			tokens = make([]compoundToken, 0, len(compoundRule))
-			for _, r := range compoundRule {
-				if isCompoundOperator(r) {
-					tokens = append(tokens, compoundToken{lit: string(r)})
-					continue
-				}
-				tokens = append(tokens, compoundToken{flag: string(r), isFlag: true})
-			}
-		}
-
-		pattern := "^"
-		for _, token := range tokens {
-			if token.isFlag {
-				groups := affix.compoundMap[token.flag]
-				pattern += "(" + strings.Join(groups, "|") + ")"
-				continue
-			}
-			pattern += regexp.QuoteMeta(token.lit)
-		}
-		pattern += "$"
-
-		pat, perr := regexp.Compile(pattern)
-		if perr != nil {
-			return nil, perr
+		pat, compileErr := compileCompoundPattern(affix, compoundRule)
+		if compileErr != nil {
+			return nil, compileErr
 		}
 		gs.compounds = append(gs.compounds, pat)
 	}
@@ -447,6 +569,10 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 
 // newGoSpell from AFF and DIC Hunspell filenames
 func newGoSpell(affFile, dicFile string) (*goSpell, error) {
+	return newGoSpellWithOptions(affFile, dicFile, goSpellLoadOptions{})
+}
+
+func newGoSpellWithOptions(affFile, dicFile string, opts goSpellLoadOptions) (*goSpell, error) {
 	aff, err := os.Open(affFile)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open aff: %s", err.Error())
@@ -457,6 +583,33 @@ func newGoSpell(affFile, dicFile string) (*goSpell, error) {
 		return nil, fmt.Errorf("unable to open dic: %s", err.Error())
 	}
 	defer dic.Close()
-	h, err := newGoSpellReader(aff, dic)
+	h, err := newGoSpellReaderWithOptions(aff, dic, opts)
 	return h, err
+}
+
+func compileCompoundPattern(affix *dictConfig, compoundRule string) (*regexp.Regexp, error) {
+	tokens, tokenErr := affix.tokenizeCompoundRule(compoundRule)
+	if tokenErr != nil {
+		tokens = make([]compoundToken, 0, len(compoundRule))
+		for _, r := range compoundRule {
+			if isCompoundOperator(r) {
+				tokens = append(tokens, compoundToken{lit: string(r)})
+				continue
+			}
+			tokens = append(tokens, compoundToken{flag: string(r), isFlag: true})
+		}
+	}
+
+	pattern := "^"
+	for _, token := range tokens {
+		if token.isFlag {
+			groups := affix.compoundMap[token.flag]
+			pattern += "(" + strings.Join(groups, "|") + ")"
+			continue
+		}
+		pattern += regexp.QuoteMeta(token.lit)
+	}
+	pattern += "$"
+
+	return regexp.Compile(pattern)
 }

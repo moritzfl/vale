@@ -58,6 +58,7 @@ func (e *Existence) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, err
 		Dicpath:      e.Dicpath,
 		Dictionaries: dictionaries,
 		Append:       e.Append,
+		lazyMorph:    true,
 	}, cfg, e.path)
 	if err != nil {
 		return nil, err

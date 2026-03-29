@@ -32,6 +32,7 @@ type Options struct {
 	names       []string
 	dics        []dictionary
 	load        bool
+	lazyMorph   bool
 }
 
 // A CheckerOption is a setting that changes the checker-creation process.
@@ -74,6 +75,14 @@ func UsingDictionaryByPath(dic, aff string) CheckerOption {
 	}
 }
 
+// WithLazyMorphology enables lazy dictionary expansion where inflections are
+// derived on demand and cached per queried lemma.
+func WithLazyMorphology() CheckerOption {
+	return func(opts *Options) {
+		opts.lazyMorph = true
+	}
+}
+
 // Checker is a spell-checker based on multiple dictionaries.
 type Checker struct {
 	options  Options
@@ -104,7 +113,9 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 	}
 
 	for _, entry := range base.dics {
-		c, err := newGoSpell(entry.aff, entry.dic)
+		c, err := newGoSpellWithOptions(entry.aff, entry.dic, goSpellLoadOptions{
+			lazyMorphology: base.lazyMorph,
+		})
 		if err != nil {
 			return &checker, err
 		}
@@ -116,7 +127,9 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 		aff := bytes.NewReader(defaultAff)
 		dic := bytes.NewReader(defaultDic)
 
-		c, err := newGoSpellReader(aff, dic)
+		c, err := newGoSpellReaderWithOptions(aff, dic, goSpellLoadOptions{
+			lazyMorphology: base.lazyMorph,
+		})
 		if err != nil {
 			return &checker, err
 		}
@@ -285,7 +298,9 @@ func (m *Checker) loadDic(name string) error {
 		return err
 	}
 
-	s, err := newGoSpell(affPath, dicPath)
+	s, err := newGoSpellWithOptions(affPath, dicPath, goSpellLoadOptions{
+		lazyMorphology: m.options.lazyMorph,
+	})
 	if err != nil {
 		return err
 	}

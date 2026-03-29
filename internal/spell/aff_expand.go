@@ -53,7 +53,7 @@ func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags [
 // This also supports CompoundRule flags.
 func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, error) {
 	out = out[:0]
-	word, keyString, hasFlags, err := splitWordFlags(wordAffix)
+	word, keyString, hasFlags, err := a.splitWordFlags(wordAffix)
 	if err != nil {
 		return nil, err
 	}

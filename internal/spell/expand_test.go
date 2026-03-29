@@ -216,6 +216,30 @@ func TestExpandSupportsUTF8EmojiFlags(t *testing.T) {
 	})
 }
 
+func TestExpandSupportsAffixHeadersWithInlineComments(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nSFX A Y 1 # German adjective ending\nSFX A 0 en .\n",
+		"1\ngut/A\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandSupportsAffixRulesWithoutExplicitCondition(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 en\n",
+		"1\ngut/A\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
 func TestExpandSupportsLongFlags(t *testing.T) {
 	checker := newCheckerFromInlineDict(t,
 		"SET UTF-8\nFLAG long\nSFX AB Y 1\nSFX AB 0 en .\n",
@@ -273,6 +297,53 @@ func TestExpandSupportsFlagAliases(t *testing.T) {
 	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
 		"gut":   {},
 		"guten": {},
+	})
+}
+
+func TestExpandSupportsLongFlagAliasesWithDictionaryMetadata(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG long\nAF 1\nAF AB\nSFX AB Y 1\nSFX AB 0 en .\n",
+		"1\ngut/1 st:gut po:adj\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandIgnoresDictionaryCommentLines(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 en .\n",
+		"3\n/\n/ Italian dictionary comment\ngut/A\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("gut"), map[string]struct{}{
+		"gut":   {},
+		"guten": {},
+	})
+}
+
+func TestExpandAcceptsTrailingSlashEntriesWithoutFlags(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\n",
+		"1\nhaus/\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("haus"), map[string]struct{}{
+		"haus": {},
+	})
+}
+
+func TestExpandSupportsSlashWordEntries(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG num\nSFX 12 Y 1\nSFX 12 0 s .\n",
+		"1\n/12\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("/"), map[string]struct{}{
+		"/":  {},
+		"/s": {},
 	})
 }
 

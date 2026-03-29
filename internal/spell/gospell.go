@@ -278,6 +278,43 @@ func mergeInflections(existing []Inflection, inflections []Inflection) []Inflect
 	return merged
 }
 
+func cleanDictionaryLine(raw string) string {
+	line := strings.TrimSpace(raw)
+	if line == "" || isDictionaryComment(line) {
+		return ""
+	}
+
+	if idx := strings.IndexRune(line, '\t'); idx >= 0 {
+		line = line[:idx]
+	}
+
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	end := len(fields)
+	for end > 0 && looksLikeMorphField(fields[end-1]) {
+		end--
+	}
+	if end == 0 {
+		return ""
+	}
+
+	return strings.Join(fields[:end], " ")
+}
+
+func isDictionaryComment(line string) bool {
+	return strings.HasPrefix(line, "#") ||
+		line == "/" ||
+		strings.HasPrefix(line, "/ ") ||
+		strings.HasPrefix(line, "/\t")
+}
+
+func looksLikeMorphField(field string) bool {
+	return strings.HasPrefix(field, "#") || strings.Contains(field, ":")
+}
+
 func readUTF8(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -326,13 +363,12 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 
 	derived := []derivedWord{}
 	for scanner.Scan() {
-		line := scanner.Text()
-		// NOTE: We do this for entries like
-		//
-		// abandonware/M	Noun: uncountable
-		line = strings.Split(line, "\t")[0]
+		line := cleanDictionaryLine(scanner.Text())
+		if line == "" {
+			continue
+		}
 
-		baseWord, _, hasAffix, splitErr := splitWordFlags(line)
+		baseWord, _, hasAffix, splitErr := affix.splitWordFlags(line)
 		if splitErr != nil {
 			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
 		}

@@ -33,7 +33,10 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 	expectedAF := -1
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := trimAFFLine(scanner.Text())
+		if line == "" {
+			continue
+		}
 
 		parts := strings.Fields(line)
 		if len(parts) == 0 {
@@ -141,50 +144,7 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 				atype = Suffix
 			}
 
-			sections := len(parts)
-			if sections >= 5 {
-				flag, err := aff.parseSingleFlag(parts[1])
-				if err != nil {
-					return nil, err
-				}
-				a, ok := aff.AffixMap[flag]
-				if !ok {
-					return nil, fmt.Errorf("got rules for flag %q but no definition", flag)
-				}
-
-				strip := ""
-				if parts[2] != "0" {
-					strip = parts[2]
-				}
-
-				var matcher *regexp.Regexp
-				pat := parts[4]
-				if pat != "." {
-					if a.Type == Prefix {
-						pat = "^" + pat
-					} else {
-						pat += "$"
-					}
-					matcher, err = regexp.Compile(pat)
-					if err != nil {
-						return nil, fmt.Errorf("unable to compile %s", pat)
-					}
-				}
-
-				affixText, continuation, err := aff.splitAffixAndContinuation(parts[3])
-				if err != nil {
-					return nil, err
-				}
-
-				a.Rules = append(a.Rules, rule{
-					Strip:             strip,
-					AffixText:         affixText,
-					Pattern:           parts[4],
-					ContinuationFlags: continuation,
-					matcher:           matcher,
-				})
-				aff.AffixMap[flag] = a
-			} else if sections >= 4 {
+			if isAffixHeader(parts) {
 				cross, err := isCrossProduct(parts[2])
 				if err != nil {
 					return nil, err
@@ -199,7 +159,59 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 					return nil, err
 				}
 				aff.AffixMap[flag] = a
+				continue
 			}
+
+			if len(parts) < 4 {
+				return nil, fmt.Errorf("%s stanza had %d fields, expected at least 4", parts[0], len(parts))
+			}
+
+			flag, err := aff.parseSingleFlag(parts[1])
+			if err != nil {
+				return nil, err
+			}
+			a, ok := aff.AffixMap[flag]
+			if !ok {
+				return nil, fmt.Errorf("got rules for flag %q but no definition", flag)
+			}
+
+			strip := ""
+			if parts[2] != "0" {
+				strip = parts[2]
+			}
+
+			patternText := "."
+			if len(parts) >= 5 {
+				patternText = parts[4]
+			}
+
+			pattern := patternText
+			var matcher *regexp.Regexp
+			if pattern != "." {
+				if a.Type == Prefix {
+					pattern = "^" + pattern
+				} else {
+					pattern += "$"
+				}
+				matcher, err = regexp.Compile(pattern)
+				if err != nil {
+					return nil, fmt.Errorf("unable to compile %s", pattern)
+				}
+			}
+
+			affixText, continuation, err := aff.splitAffixAndContinuation(parts[3])
+			if err != nil {
+				return nil, err
+			}
+
+			a.Rules = append(a.Rules, rule{
+				Strip:             strip,
+				AffixText:         affixText,
+				Pattern:           patternText,
+				ContinuationFlags: continuation,
+				matcher:           matcher,
+			})
+			aff.AffixMap[flag] = a
 		default:
 			// Do nothing.
 			//
@@ -216,4 +228,22 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 	}
 
 	return &aff, nil
+}
+
+func trimAFFLine(line string) string {
+	if idx := strings.IndexRune(line, '#'); idx >= 0 {
+		line = line[:idx]
+	}
+	return strings.TrimSpace(line)
+}
+
+func isAffixHeader(parts []string) bool {
+	if len(parts) != 4 {
+		return false
+	}
+	if _, err := isCrossProduct(parts[2]); err != nil {
+		return false
+	}
+	_, err := strconv.Atoi(parts[3])
+	return err == nil
 }

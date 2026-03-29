@@ -9,8 +9,43 @@ import (
 
 const zeroWidthJoiner = '\u200d'
 
-func splitWordFlags(entry string) (string, string, bool, error) {
-	slash := -1
+func (a dictConfig) splitWordFlags(entry string) (string, string, bool, error) {
+	slashes := unescapedSlashes(entry)
+	if len(slashes) == 0 {
+		return strings.ReplaceAll(entry, `\/`, "/"), "", false, nil
+	}
+
+	for i := len(slashes) - 1; i >= 0; i-- {
+		slash := slashes[i]
+		if slash == 0 {
+			flagSpec := entry[1:]
+			if a.isDictionaryFlagSpec(flagSpec) {
+				return "/", flagSpec, true, nil
+			}
+			continue
+		}
+		if slash == len(entry)-1 {
+			return strings.ReplaceAll(entry[:slash], `\/`, "/"), "", false, nil
+		}
+
+		flagSpec := entry[slash+1:]
+		if !a.isDictionaryFlagSpec(flagSpec) {
+			continue
+		}
+
+		word := strings.ReplaceAll(entry[:slash], `\/`, "/")
+		return word, flagSpec, true, nil
+	}
+
+	if slashes[0] == 0 {
+		return strings.ReplaceAll(entry, `\/`, "/"), "", false, nil
+	}
+
+	return strings.ReplaceAll(entry, `\/`, "/"), "", false, nil
+}
+
+func unescapedSlashes(entry string) []int {
+	slashes := make([]int, 0, 1)
 	escaped := false
 	for i, r := range entry {
 		if escaped {
@@ -22,20 +57,24 @@ func splitWordFlags(entry string) (string, string, bool, error) {
 			continue
 		}
 		if r == '/' {
-			slash = i
-			break
+			slashes = append(slashes, i)
 		}
 	}
 
-	if slash == -1 {
-		return strings.ReplaceAll(entry, `\/`, "/"), "", false, nil
-	}
-	if slash == 0 || slash == len(entry)-1 {
-		return "", "", false, fmt.Errorf("slash char found in first or last position")
+	return slashes
+}
+
+func (a dictConfig) isDictionaryFlagSpec(raw string) bool {
+	if raw == "" {
+		return false
 	}
 
-	word := strings.ReplaceAll(entry[:slash], `\/`, "/")
-	return word, entry[slash+1:], true, nil
+	if flags, ok := a.resolveAliasFlags(raw); ok && len(flags) > 0 {
+		return true
+	}
+
+	_, err := a.parseFlags(raw)
+	return err == nil
 }
 
 func parseFlagMode(raw string) (flagMode, string, error) {
@@ -138,30 +177,33 @@ func parseAliasIndexes(raw string) ([]int, error) {
 	return indexes, nil
 }
 
-func (a dictConfig) resolveDictionaryFlags(raw string) ([]string, error) {
-	flags, err := a.parseFlags(raw)
-	if err != nil {
-		return nil, err
-	}
-
+func (a dictConfig) resolveAliasFlags(raw string) ([]string, bool) {
 	if len(a.flagAliases) == 0 || !isAliasRef(raw) {
-		return flags, nil
+		return nil, false
 	}
 
 	indexes, err := parseAliasIndexes(raw)
 	if err != nil || len(indexes) == 0 {
-		return flags, nil
+		return nil, false
 	}
 
 	expanded := make([]string, 0, len(indexes)*2)
 	for _, idx := range indexes {
 		if idx <= 0 || idx > len(a.flagAliases) {
-			return flags, nil
+			return nil, false
 		}
 		expanded = append(expanded, a.flagAliases[idx-1]...)
 	}
 
-	return expanded, nil
+	return expanded, true
+}
+
+func (a dictConfig) resolveDictionaryFlags(raw string) ([]string, error) {
+	if flags, ok := a.resolveAliasFlags(raw); ok {
+		return flags, nil
+	}
+
+	return a.parseFlags(raw)
 }
 
 func (a dictConfig) splitAffixAndContinuation(raw string) (string, []string, error) {
@@ -180,7 +222,7 @@ func (a dictConfig) splitAffixAndContinuation(raw string) (string, []string, err
 	}
 
 	continuationRaw := raw[split+1:]
-	continuation, err := a.parseFlags(continuationRaw)
+	continuation, err := a.resolveDictionaryFlags(continuationRaw)
 	if err != nil {
 		return "", nil, err
 	}

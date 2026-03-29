@@ -7,6 +7,8 @@ import (
 	"unicode"
 )
 
+const zeroWidthJoiner = '\u200d'
+
 func splitWordFlags(entry string) (string, string, bool, error) {
 	slash := -1
 	escaped := false
@@ -57,12 +59,14 @@ func (a dictConfig) parseFlags(raw string) ([]string, error) {
 	}
 
 	switch a.flagMode {
-	case flagASCII, flagUTF8:
+	case flagASCII:
 		flags := make([]string, 0, len(raw))
 		for _, r := range raw {
 			flags = append(flags, string(r))
 		}
 		return flags, nil
+	case flagUTF8:
+		return splitUTF8Flags(raw), nil
 	case flagLong:
 		runes := []rune(raw)
 		if len(runes)%2 != 0 {
@@ -193,17 +197,87 @@ func isCompoundOperator(r rune) bool {
 	}
 }
 
+// Real Hunspell UTF-8 dictionaries can use a single flag token that spans
+// multiple code points, for example emoji plus a variation selector.
+func splitUTF8Flags(raw string) []string {
+	runes := []rune(raw)
+	flags := make([]string, 0, len(runes))
+
+	for i := 0; i < len(runes); {
+		next := nextUTF8FlagBoundary(runes, i)
+		flags = append(flags, string(runes[i:next]))
+		i = next
+	}
+
+	return flags
+}
+
+func nextUTF8FlagBoundary(runes []rune, start int) int {
+	i := start + 1
+
+	if isRegionalIndicator(runes[start]) && i < len(runes) && isRegionalIndicator(runes[i]) {
+		i++
+	}
+
+	for i < len(runes) {
+		switch {
+		case isUTF8FlagExtend(runes[i]):
+			i++
+		case runes[i] == zeroWidthJoiner:
+			if i+1 >= len(runes) {
+				return len(runes)
+			}
+			i += 2
+		default:
+			return i
+		}
+	}
+
+	return i
+}
+
+func isUTF8FlagExtend(r rune) bool {
+	return unicode.In(r, unicode.Mn, unicode.Mc, unicode.Me) || isEmojiModifier(r)
+}
+
+func isEmojiModifier(r rune) bool {
+	return r >= 0x1f3fb && r <= 0x1f3ff
+}
+
+func isRegionalIndicator(r rune) bool {
+	return r >= 0x1f1e6 && r <= 0x1f1ff
+}
+
 func (a dictConfig) tokenizeCompoundRule(rule string) ([]compoundToken, error) {
 	tokens := make([]compoundToken, 0, len(rule))
 
 	switch a.flagMode {
-	case flagASCII, flagUTF8:
+	case flagASCII:
 		for _, r := range rule {
 			if isCompoundOperator(r) {
 				tokens = append(tokens, compoundToken{lit: string(r)})
 				continue
 			}
 			tokens = append(tokens, compoundToken{flag: string(r), isFlag: true})
+		}
+	case flagUTF8:
+		runes := []rune(rule)
+		for i := 0; i < len(runes); {
+			if unicode.IsSpace(runes[i]) {
+				i++
+				continue
+			}
+			if isCompoundOperator(runes[i]) {
+				tokens = append(tokens, compoundToken{lit: string(runes[i])})
+				i++
+				continue
+			}
+			next := nextUTF8FlagBoundary(runes, i)
+			tokens = append(tokens, compoundToken{
+				flag:   string(runes[i:next]),
+				isFlag: true,
+			})
+			i = next
 		}
 	case flagLong:
 		runes := []rune(rule)

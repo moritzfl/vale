@@ -202,6 +202,20 @@ func TestExpandSupportsUTF8NonASCIIFLags(t *testing.T) {
 	})
 }
 
+func TestExpandSupportsUTF8EmojiFlags(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG UTF-8\nPFX ☎️ Y 1\nPFX ☎️ 0 tele .\nSFX S Y 1\nSFX S 0 s .\n",
+		"1\nbanco/S☎️\n",
+	)
+
+	assertFormsEqual(t, checker.Expand("banco"), map[string]struct{}{
+		"banco":      {},
+		"bancos":     {},
+		"telebanco":  {},
+		"telebancos": {},
+	})
+}
+
 func TestExpandSupportsLongFlags(t *testing.T) {
 	checker := newCheckerFromInlineDict(t,
 		"SET UTF-8\nFLAG long\nSFX AB Y 1\nSFX AB 0 en .\n",
@@ -306,6 +320,17 @@ func TestSpellSupportsNumFlagCompoundRules(t *testing.T) {
 
 	if !checker.Spell("hausboot") {
 		t.Fatal("expected compound word hausboot to be recognized")
+	}
+}
+
+func TestSpellSupportsUTF8EmojiCompoundRules(t *testing.T) {
+	checker := newCheckerFromInlineDict(t,
+		"SET UTF-8\nFLAG UTF-8\nCOMPOUNDRULE 1\nCOMPOUNDRULE ☎️S\n",
+		"2\ntele/☎️\nbanco/S\n",
+	)
+
+	if !checker.Spell("telebanco") {
+		t.Fatal("expected compound word telebanco to be recognized")
 	}
 }
 

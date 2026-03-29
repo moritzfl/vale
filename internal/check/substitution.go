@@ -2,6 +2,8 @@ package check
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -128,6 +130,42 @@ func cloneStrings(values []string) []string {
 	return cloned
 }
 
+func normalizeMorphologyPath(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+
+	return filepath.Clean(path)
+}
+
+func resolveMorphologyDicpath(cfg *core.Config, dicpath string) string {
+	if dicpath == "" {
+		return ""
+	}
+
+	cwd, _ := os.Getwd()
+	candidates := []string{
+		dicpath,
+		filepath.Join(cfg.StylesPath(), dicpath),
+		filepath.Join(cwd, dicpath),
+	}
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		return normalizeMorphologyPath(candidate)
+	}
+
+	return normalizeMorphologyPath(dicpath)
+}
+
 func buildMorphologyReplacement(source, replacement string, checker *spell.Checker) (morphologyReplacement, bool) {
 	if checker == nil {
 		return morphologyReplacement{}, false
@@ -236,21 +274,35 @@ func morphologyCheckerKey(
 	dictionaries []string,
 ) string {
 	builder := strings.Builder{}
-	builder.Grow(len(cfg.StylesPath()) + len(rulePath) + len(aff) + len(dic) + len(dicpath) + len(dictionaries)*12 + 8)
-	builder.WriteString(cfg.StylesPath())
-	builder.WriteByte('\x00')
+
+	resolvedAff := normalizeMorphologyPath(core.FindAsset(cfg, aff))
+	resolvedDic := normalizeMorphologyPath(core.FindAsset(cfg, dic))
+	resolvedDicpath := resolveMorphologyDicpath(cfg, dicpath)
+	resolvedSearchPaths := cfg.SearchPaths()
+
 	builder.WriteString(rulePath)
 	builder.WriteByte('\x00')
 	builder.WriteString(aff)
 	builder.WriteByte('\x00')
+	builder.WriteString(resolvedAff)
+	builder.WriteByte('\x00')
 	builder.WriteString(dic)
 	builder.WriteByte('\x00')
+	builder.WriteString(resolvedDic)
+	builder.WriteByte('\x00')
 	builder.WriteString(dicpath)
+	builder.WriteByte('\x00')
+	builder.WriteString(resolvedDicpath)
 	builder.WriteByte('\x00')
 	if appendDefault {
 		builder.WriteByte('1')
 	} else {
 		builder.WriteByte('0')
+	}
+
+	for _, searchPath := range resolvedSearchPaths {
+		builder.WriteByte('\x00')
+		builder.WriteString(normalizeMorphologyPath(searchPath))
 	}
 
 	for _, name := range dictionaries {

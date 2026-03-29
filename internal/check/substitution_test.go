@@ -534,6 +534,79 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	}
 }
 
+func TestMorphologyCheckerSeparatesRelativeDicpathsByWorkingDirectory(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+
+	dictA := filepath.Join(rootA, "dict")
+	dictB := filepath.Join(rootB, "dict")
+	if err = os.MkdirAll(dictA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(dictB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeMorphDict(t, dictA, "custom", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictB, "custom", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 er .\n", "1\ngut/A\n")
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	makeRule := func() *Substitution {
+		rule, ruleErr := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+			"extends":      "substitution",
+			"name":         "German.Gut",
+			"level":        "warning",
+			"message":      "Consider using '%s' instead of '%s'.",
+			"scope":        "text",
+			"ignorecase":   false,
+			"morphology":   true,
+			"dictionaries": []string{"custom"},
+			"dicpath":      "dict",
+			"swap": map[string]string{
+				"gut": "hervorragend",
+			},
+		})
+		if ruleErr != nil {
+			t.Fatalf("Failed to create rule: %v", ruleErr)
+		}
+		return rule
+	}
+
+	if err = os.Chdir(rootA); err != nil {
+		t.Fatal(err)
+	}
+	ruleA := makeRule()
+	checkerA, err := ruleA.makeMorphologyChecker(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create first checker: %v", err)
+	}
+
+	if err = os.Chdir(rootB); err != nil {
+		t.Fatal(err)
+	}
+	ruleB := makeRule()
+	checkerB, err := ruleB.makeMorphologyChecker(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create second checker: %v", err)
+	}
+
+	if checkerA == checkerB {
+		t.Fatal("expected distinct morphology checkers for different resolved dicpaths")
+	}
+}
+
 func TestMorphologyCheckerConcurrentCreation(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

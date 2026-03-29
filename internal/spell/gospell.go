@@ -30,7 +30,6 @@ type goSpell struct {
 	affix             *dictConfig
 	lazyMorphology    bool
 	lazyBaseEntries   map[string][]lazyDictionaryEntry
-	lazyLowerToBase   map[string]string
 	lazyMu            sync.Mutex
 	lemmaMap          map[string]string
 	baseToForms       map[string][]string
@@ -48,7 +47,8 @@ type lazyDictionaryEntry struct {
 }
 
 type goSpellLoadOptions struct {
-	lazyMorphology bool
+	lazyMorphology  bool
+	indexMorphology bool
 }
 
 func withUTF8Hint(err error) error {
@@ -329,9 +329,7 @@ func (s *goSpell) resolveLazyBase(word string) (string, bool) {
 	if _, ok := s.lazyBaseEntries[word]; ok {
 		return word, true
 	}
-
-	base, ok := s.lazyLowerToBase[lower]
-	return base, ok
+	return "", false
 }
 
 func mergeForms(existing []string, forms []string) []string {
@@ -434,7 +432,9 @@ func readUTF8(r io.Reader) ([]byte, error) {
 // newGoSpellReader creates a speller from io.Readers for
 // Hunspell files
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
-	return newGoSpellReaderWithOptions(aff, dic, goSpellLoadOptions{})
+	return newGoSpellReaderWithOptions(aff, dic, goSpellLoadOptions{
+		indexMorphology: true,
+	})
 }
 
 func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*goSpell, error) {
@@ -461,16 +461,25 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 
 	gs := goSpell{
 		// TODO: Use fixed size from first list?
-		dict:              make(map[string]struct{}),
-		compounds:         make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
-		splitter:          newSplitter(affix.WordChars),
-		affix:             affix,
-		lazyMorphology:    opts.lazyMorphology,
-		lazyBaseEntries:   make(map[string][]lazyDictionaryEntry),
-		lazyLowerToBase:   make(map[string]string),
-		lemmaMap:          make(map[string]string),
-		baseToForms:       make(map[string][]string),
-		baseToInflections: make(map[string][]Inflection),
+		dict:           make(map[string]struct{}),
+		compounds:      make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
+		splitter:       newSplitter(affix.WordChars),
+		affix:          affix,
+		lazyMorphology: opts.lazyMorphology,
+	}
+	if opts.lazyMorphology {
+		gs.lazyBaseEntries = make(map[string][]lazyDictionaryEntry)
+		gs.lemmaMap = make(map[string]string)
+		gs.baseToInflections = make(map[string][]Inflection)
+	}
+	if opts.indexMorphology {
+		if gs.lemmaMap == nil {
+			gs.lemmaMap = make(map[string]string)
+		}
+		gs.baseToForms = make(map[string][]string)
+		if gs.baseToInflections == nil {
+			gs.baseToInflections = make(map[string][]Inflection)
+		}
 	}
 
 	derived := []derivedWord{}
@@ -480,18 +489,15 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 			continue
 		}
 
-		baseWord, keyString, hasAffix, splitErr := affix.splitWordFlags(line)
-		if splitErr != nil {
-			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
-		}
 		if opts.lazyMorphology {
+			baseWord, keyString, hasAffix, splitErr := affix.splitWordFlags(line)
+			if splitErr != nil {
+				return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
+			}
+
 			gs.dict[baseWord] = struct{}{}
 			if _, ok := gs.lemmaMap[baseWord]; !ok {
 				gs.lemmaMap[baseWord] = baseWord
-			}
-			lowerBase := strings.ToLower(baseWord)
-			if _, ok := gs.lazyLowerToBase[lowerBase]; !ok {
-				gs.lazyLowerToBase[lowerBase] = baseWord
 			}
 			gs.lazyBaseEntries[baseWord] = append(gs.lazyBaseEntries[baseWord], lazyDictionaryEntry{
 				line:     line,
@@ -518,12 +524,28 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 			continue
 		}
 
+		baseWord := ""
+		hasAffix := false
+		if opts.indexMorphology {
+			var splitErr error
+			baseWord, _, hasAffix, splitErr = affix.splitWordFlags(line)
+			if splitErr != nil {
+				return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %w", line, splitErr))
+			}
+		}
+
 		derived, err = affix.expand(line, derived)
 		if err != nil {
 			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %s", line, err.Error()))
 		}
 
 		if len(derived) == 0 {
+			continue
+		}
+		if !opts.indexMorphology {
+			for _, item := range derived {
+				gs.dict[item.word] = struct{}{}
+			}
 			continue
 		}
 
@@ -569,7 +591,9 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 
 // newGoSpell from AFF and DIC Hunspell filenames
 func newGoSpell(affFile, dicFile string) (*goSpell, error) {
-	return newGoSpellWithOptions(affFile, dicFile, goSpellLoadOptions{})
+	return newGoSpellWithOptions(affFile, dicFile, goSpellLoadOptions{
+		indexMorphology: true,
+	})
 }
 
 func newGoSpellWithOptions(affFile, dicFile string, opts goSpellLoadOptions) (*goSpell, error) {

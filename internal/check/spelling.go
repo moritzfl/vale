@@ -39,6 +39,7 @@ type Spelling struct {
 	Custom       bool
 	Append       bool
 	lazyMorph    bool
+	skipMorphIdx bool
 }
 
 func addFilters(s *Spelling, generic baseCheck, _ *core.Config) error {
@@ -94,6 +95,8 @@ func NewSpelling(cfg *core.Config, generic baseCheck, path string) (Spelling, er
 	var model *spell.Checker
 
 	rule := Spelling{}
+	// Spelling flows only need Spell/Suggest and can skip morphology indexes.
+	rule.skipMorphIdx = true
 	name, _ := generic["name"].(string)
 
 	err := addFilters(&rule, generic, cfg)
@@ -220,6 +223,9 @@ func makeSpeller(s *Spelling, cfg *core.Config, rulePath string) (*spell.Checker
 
 	if s.lazyMorph {
 		options = append(options, spell.WithLazyMorphology())
+	}
+	if s.skipMorphIdx {
+		options = append(options, spell.WithoutMorphologyIndexes())
 	}
 
 	affloc := core.FindAsset(cfg, s.Aff)

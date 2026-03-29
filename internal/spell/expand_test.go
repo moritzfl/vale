@@ -387,6 +387,40 @@ func TestExpandSupportsLazyMorphologyMode(t *testing.T) {
 	})
 }
 
+func TestLazyMorphologyPreservesQueryCaseFallback(t *testing.T) {
+	checker := newCheckerFromInlineDictWithOptions(
+		t,
+		"SET UTF-8\n",
+		"2\nGlutanimate\nChrisjake\n",
+		WithLazyMorphology(),
+	)
+
+	assertFormsEqual(t, checker.Expand("glutanimate"), map[string]struct{}{
+		"glutanimate": {},
+	})
+	assertFormsEqual(t, checker.Expand("chrisjake"), map[string]struct{}{
+		"chrisjake": {},
+	})
+}
+
+func TestExpandWithoutMorphologyIndexesStillSupportsSpellChecks(t *testing.T) {
+	checker := newCheckerFromInlineDictWithOptions(
+		t,
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 able/B .\nSFX B Y 1\nSFX B 0 ness .\n",
+		"1\naccept/A\n",
+		WithoutMorphologyIndexes(),
+	)
+
+	if !checker.Spell("acceptableness") {
+		t.Fatal("expected inflected form to be recognized without morphology indexes")
+	}
+
+	// Without morphology indexes, expansion APIs intentionally fall back.
+	assertFormsEqual(t, checker.Expand("accept"), map[string]struct{}{
+		"accept": {},
+	})
+}
+
 func TestExpandHonorsPrefixStripBehavior(t *testing.T) {
 	checker := newCheckerFromInlineDict(t,
 		"SET UTF-8\nPFX I Y 1\nPFX I p imp p\n",

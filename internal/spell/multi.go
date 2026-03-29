@@ -18,8 +18,9 @@ var defaultAff []byte
 var defaultDic []byte
 
 var defaultOpts = Options{
-	path: os.Getenv("DICPATH"),
-	load: false,
+	path:       os.Getenv("DICPATH"),
+	load:       false,
+	indexMorph: true,
 
 	system: os.Getenv("DICPATH"),
 }
@@ -33,6 +34,7 @@ type Options struct {
 	dics        []dictionary
 	load        bool
 	lazyMorph   bool
+	indexMorph  bool
 }
 
 // A CheckerOption is a setting that changes the checker-creation process.
@@ -83,6 +85,14 @@ func WithLazyMorphology() CheckerOption {
 	}
 }
 
+// WithoutMorphologyIndexes disables eager morphology lineage indexes and is
+// intended for spell-checking flows that never call Expand/ExpandWithLineage.
+func WithoutMorphologyIndexes() CheckerOption {
+	return func(opts *Options) {
+		opts.indexMorph = false
+	}
+}
+
 // Checker is a spell-checker based on multiple dictionaries.
 type Checker struct {
 	options  Options
@@ -114,7 +124,8 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 
 	for _, entry := range base.dics {
 		c, err := newGoSpellWithOptions(entry.aff, entry.dic, goSpellLoadOptions{
-			lazyMorphology: base.lazyMorph,
+			lazyMorphology:  base.lazyMorph,
+			indexMorphology: base.indexMorph,
 		})
 		if err != nil {
 			return &checker, err
@@ -128,7 +139,8 @@ func NewChecker(options ...CheckerOption) (*Checker, error) {
 		dic := bytes.NewReader(defaultDic)
 
 		c, err := newGoSpellReaderWithOptions(aff, dic, goSpellLoadOptions{
-			lazyMorphology: base.lazyMorph,
+			lazyMorphology:  base.lazyMorph,
+			indexMorphology: base.indexMorph,
 		})
 		if err != nil {
 			return &checker, err
@@ -299,7 +311,8 @@ func (m *Checker) loadDic(name string) error {
 	}
 
 	s, err := newGoSpellWithOptions(affPath, dicPath, goSpellLoadOptions{
-		lazyMorphology: m.options.lazyMorph,
+		lazyMorphology:  m.options.lazyMorph,
+		indexMorphology: m.options.indexMorph,
 	})
 	if err != nil {
 		return err

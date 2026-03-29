@@ -874,6 +874,77 @@ func TestMorphologySubstitutionPhraseExpansion(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionLiteralAlternationExpansion(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"3\nsetting/A\noption/A\npreference/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.Preference",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"setting|option": "preference",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	cases := []struct {
+		text    string
+		match   string
+		message string
+	}{
+		{
+			text:    "These settings are configurable.",
+			match:   "settings",
+			message: "Consider using 'preferences' instead of 'settings'.",
+		},
+		{
+			text:    "These options are configurable.",
+			match:   "options",
+			message: "Consider using 'preferences' instead of 'options'.",
+		},
+	}
+
+	for _, tc := range cases {
+		alerts, runErr := rule.Run(
+			nlp.NewBlock(tc.text, tc.text, "text"),
+			&core.File{},
+			cfg,
+		)
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+		if len(alerts) != 1 {
+			t.Fatalf("expected 1 alert for %q, got %d", tc.text, len(alerts))
+		}
+		if alerts[0].Match != tc.match {
+			t.Fatalf("expected match %q, got %q", tc.match, alerts[0].Match)
+		}
+		if alerts[0].Message != tc.message {
+			t.Fatalf("unexpected message for %q: %q", tc.text, alerts[0].Message)
+		}
+	}
+}
+
 func TestMorphologyInvalidDicpath(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

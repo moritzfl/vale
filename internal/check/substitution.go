@@ -93,11 +93,70 @@ func expandForMorphology(word string, gs *spell.Checker) string {
 		return word
 	}
 
+	if options, ok := splitMorphAlternatives(word); ok && len(options) > 1 {
+		forms := []string{}
+		seen := map[string]struct{}{}
+		expanded := false
+
+		for _, option := range options {
+			optionForms := gs.Expand(option)
+			if len(optionForms) > 1 {
+				expanded = true
+			}
+			if len(optionForms) == 0 {
+				optionForms = []string{option}
+			}
+
+			for _, form := range optionForms {
+				if _, exists := seen[form]; exists {
+					continue
+				}
+				seen[form] = struct{}{}
+				forms = append(forms, form)
+			}
+		}
+
+		if expanded {
+			return toAlternation(forms)
+		}
+
+		return word
+	}
+
 	parts := strings.Split(word, " ")
 	if len(parts) > 1 {
 		result := []string{}
 		expanded := false
 		for _, p := range parts {
+			if options, ok := splitMorphAlternatives(p); ok && len(options) > 1 {
+				optionForms := []string{}
+				seen := map[string]struct{}{}
+				optionExpanded := false
+				for _, option := range options {
+					forms := gs.Expand(option)
+					if len(forms) > 1 {
+						optionExpanded = true
+					}
+					if len(forms) == 0 {
+						forms = []string{option}
+					}
+
+					for _, form := range forms {
+						if _, exists := seen[form]; exists {
+							continue
+						}
+						seen[form] = struct{}{}
+						optionForms = append(optionForms, form)
+					}
+				}
+
+				if optionExpanded {
+					result = append(result, toAlternation(optionForms))
+					expanded = true
+					continue
+				}
+			}
+
 			pForms := gs.Expand(p)
 			if len(pForms) > 1 {
 				result = append(result, toAlternation(pForms))
@@ -182,8 +241,16 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 		srcPart := sourceParts[i]
 		replPart := replacementParts[i]
 
-		partMap := map[string]string{strings.ToLower(srcPart): replPart}
-		sourceInflections := checker.ExpandWithLineage(srcPart)
+		sourceAlternatives := []string{srcPart}
+		if options, ok := splitMorphAlternatives(srcPart); ok && len(options) > 1 {
+			sourceAlternatives = options
+		}
+
+		partMap := map[string]string{}
+		for _, option := range sourceAlternatives {
+			partMap[strings.ToLower(option)] = replPart
+		}
+
 		replacementInflections := checker.ExpandWithLineage(replPart)
 
 		replacementByLineage := map[string]string{}
@@ -212,28 +279,31 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 			replacementByLineageKey[inflection.LineageKey] = inflection.Form
 		}
 
-		for _, inflection := range sourceInflections {
-			key := strings.ToLower(inflection.Form)
-			if _, exists := partMap[key]; exists {
-				continue
-			}
-
-			if inflection.Lineage != "" {
-				if mapped, ok := replacementByLineage[inflection.Lineage]; ok {
-					partMap[key] = mapped
+		for _, sourceTerm := range sourceAlternatives {
+			sourceInflections := checker.ExpandWithLineage(sourceTerm)
+			for _, inflection := range sourceInflections {
+				key := strings.ToLower(inflection.Form)
+				if _, exists := partMap[key]; exists {
 					continue
 				}
-			}
-			if inflection.LineageKey != "" {
-				if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; !ambiguous {
-					if mapped, ok := replacementByLineageKey[inflection.LineageKey]; ok {
+
+				if inflection.Lineage != "" {
+					if mapped, ok := replacementByLineage[inflection.Lineage]; ok {
 						partMap[key] = mapped
 						continue
 					}
 				}
-			}
+				if inflection.LineageKey != "" {
+					if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; !ambiguous {
+						if mapped, ok := replacementByLineageKey[inflection.LineageKey]; ok {
+							partMap[key] = mapped
+							continue
+						}
+					}
+				}
 
-			partMap[key] = replPart
+				partMap[key] = replPart
+			}
 		}
 
 		maps[i] = partMap
@@ -532,4 +602,29 @@ func getOptions(match string) []string {
 	}
 
 	return options
+}
+
+func splitMorphAlternatives(pattern string) ([]string, bool) {
+	if !strings.Contains(pattern, "|") {
+		return []string{pattern}, true
+	}
+	// Keep full regex patterns untouched. We only expand literal alternations.
+	if strings.Contains(pattern, `\|`) || strings.ContainsAny(pattern, `()[]{}*+?^$\`) {
+		return nil, false
+	}
+
+	options := getOptions(pattern)
+	if len(options) <= 1 {
+		return nil, false
+	}
+	for _, option := range options {
+		if option == "" {
+			return nil, false
+		}
+		if strings.ContainsAny(option, `()[]{}*+?^$\`) {
+			return nil, false
+		}
+	}
+
+	return options, true
 }

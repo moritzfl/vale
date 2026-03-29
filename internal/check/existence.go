@@ -102,7 +102,7 @@ func NewExistence(cfg *core.Config, generic baseCheck, path string) (Existence, 
 	if checker != nil {
 		expanded := make([]string, 0, len(parsed))
 		for _, token := range parsed {
-			expanded = append(expanded, expandForMorphology(token, checker))
+			expanded = append(expanded, expandForMorphology(token, checker, cfg.WordTemplate))
 		}
 		parsed = expanded
 	}

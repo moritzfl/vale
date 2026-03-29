@@ -1,21 +1,31 @@
 package check
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/errata-ai/regexp2"
 	"github.com/errata-ai/vale/v3/internal/spell"
 )
 
 const morphologyRegexGroupPrefix = "morph_"
 
+type morphSplit struct {
+	words      []string
+	separators []string
+}
+
+var morphologyWordMatcherCache sync.Map
+
 // expandForMorphology expands a word/token to all its inflected forms using
 // the dictionary. If the token has no morphological variations, it returns the
 // token itself.
-func expandForMorphology(token string, checker *spell.Checker) string {
+func expandForMorphology(token string, checker *spell.Checker, template string) string {
 	if checker == nil {
 		return token
 	}
-	if expanded, ok := expandMarkedMorphGroups(token, checker); ok {
+	if expanded, ok := expandMarkedMorphGroups(token, checker, template); ok {
 		return expanded
 	}
 
@@ -25,21 +35,15 @@ func expandForMorphology(token string, checker *spell.Checker) string {
 		expanded := false
 
 		for _, option := range options {
-			optionForms := checker.Expand(option)
-			if len(optionForms) > 1 {
+			expandedOption := expandForMorphology(option, checker, template)
+			if expandedOption != option {
 				expanded = true
 			}
-			if len(optionForms) == 0 {
-				optionForms = []string{option}
+			if _, exists := seen[expandedOption]; exists {
+				continue
 			}
-
-			for _, form := range optionForms {
-				if _, exists := seen[form]; exists {
-					continue
-				}
-				seen[form] = struct{}{}
-				forms = append(forms, form)
-			}
+			seen[expandedOption] = struct{}{}
+			forms = append(forms, expandedOption)
 		}
 
 		if expanded {
@@ -49,11 +53,11 @@ func expandForMorphology(token string, checker *spell.Checker) string {
 		return token
 	}
 
-	parts := strings.Split(token, " ")
-	if len(parts) > 1 {
-		result := make([]string, 0, len(parts))
+	split := splitForMorphology(token, template, !containsRegexSyntax(token))
+	if len(split.words) > 1 {
+		result := make([]string, 0, len(split.words))
 		expanded := false
-		for _, part := range parts {
+		for _, part := range split.words {
 			partForms := checker.Expand(part)
 			if len(partForms) > 1 {
 				result = append(result, toAlternation(partForms))
@@ -63,7 +67,7 @@ func expandForMorphology(token string, checker *spell.Checker) string {
 			}
 		}
 		if expanded {
-			return strings.Join(result, " ")
+			return joinWithSeparators(result, split.separators)
 		}
 		return token
 	}
@@ -100,7 +104,7 @@ func splitMorphAlternatives(pattern string) ([]string, bool) {
 		return []string{pattern}, true
 	}
 	// Keep full regex patterns untouched. We only expand literal alternations.
-	if strings.Contains(pattern, `\|`) || strings.ContainsAny(pattern, `()[]{}*+?^$\`) {
+	if strings.Contains(pattern, `\|`) || containsRegexSyntax(pattern) {
 		return nil, false
 	}
 
@@ -112,7 +116,7 @@ func splitMorphAlternatives(pattern string) ([]string, bool) {
 		if option == "" {
 			return nil, false
 		}
-		if strings.ContainsAny(option, `()[]{}*+?^$\`) {
+		if containsRegexSyntax(option) {
 			return nil, false
 		}
 	}
@@ -120,7 +124,7 @@ func splitMorphAlternatives(pattern string) ([]string, bool) {
 	return options, true
 }
 
-func expandMarkedMorphGroups(pattern string, checker *spell.Checker) (string, bool) {
+func expandMarkedMorphGroups(pattern string, checker *spell.Checker, template string) (string, bool) {
 	seenMarker := false
 	var builder strings.Builder
 
@@ -135,7 +139,7 @@ func expandMarkedMorphGroups(pattern string, checker *spell.Checker) (string, bo
 		if strings.HasPrefix(groupName, morphologyRegexGroupPrefix) {
 			seenMarker = true
 			builder.WriteString("(?:")
-			builder.WriteString(expandForMorphology(groupBody, checker))
+			builder.WriteString(expandForMorphology(groupBody, checker, template))
 			builder.WriteString(")")
 		} else {
 			builder.WriteString(pattern[i : groupEnd+1])
@@ -219,4 +223,107 @@ func findRegexGroupEnd(pattern string, start int) (int, bool) {
 	}
 
 	return -1, false
+}
+
+func containsRegexSyntax(s string) bool {
+	return strings.ContainsAny(s, `()[]{}*+?^$\`)
+}
+
+func splitForMorphology(input, template string, useWordTemplate bool) morphSplit {
+	if input == "" {
+		return morphSplit{words: []string{""}, separators: []string{"", ""}}
+	}
+
+	if !strings.ContainsAny(input, " \t\n\r\f\v") {
+		return morphSplit{words: []string{input}, separators: []string{"", ""}}
+	}
+
+	if !useWordTemplate {
+		return morphSplit{words: []string{input}, separators: []string{"", ""}}
+	}
+
+	if split, ok := splitByWordTemplate(input, template); ok && len(split.words) > 1 {
+		return split
+	}
+
+	// No fallback to whitespace splitting: if WordTemplate can't segment this
+	// safely, treat the full input as a single token.
+	return morphSplit{words: []string{input}, separators: []string{"", ""}}
+}
+
+func splitByWordTemplate(input, template string) (morphSplit, bool) {
+	re := getMorphWordMatcher(template)
+	if re == nil {
+		return morphSplit{}, false
+	}
+
+	locs := re.FindAllStringIndex(input, -1)
+	if len(locs) == 0 {
+		return morphSplit{}, false
+	}
+
+	runes := []rune(input)
+	words := make([]string, 0, len(locs))
+	separators := make([]string, 0, len(locs)+1)
+	prev := 0
+
+	for _, loc := range locs {
+		if len(loc) != 2 || loc[0] < prev || loc[1] < loc[0] || loc[1] > len(runes) {
+			return morphSplit{}, false
+		}
+
+		separators = append(separators, string(runes[prev:loc[0]]))
+		words = append(words, string(runes[loc[0]:loc[1]]))
+		prev = loc[1]
+	}
+
+	separators = append(separators, string(runes[prev:]))
+	return morphSplit{words: words, separators: separators}, true
+}
+
+func getMorphWordMatcher(template string) *regexp2.Regexp {
+	if cached, ok := morphologyWordMatcherCache.Load(template); ok {
+		return cached.(*regexp2.Regexp)
+	}
+
+	pattern := makeRegexp(
+		template,
+		false,
+		func() bool { return true },
+		func() string { return "" },
+		true,
+	)
+	if !strings.Contains(pattern, "%s") {
+		var empty *regexp2.Regexp
+		morphologyWordMatcherCache.Store(template, empty)
+		return nil
+	}
+
+	compiled, err := regexp2.CompileStd(fmt.Sprintf(pattern, `\S+`))
+	if err != nil {
+		var empty *regexp2.Regexp
+		morphologyWordMatcherCache.Store(template, empty)
+		return nil
+	}
+
+	morphologyWordMatcherCache.Store(template, compiled)
+	return compiled
+}
+
+func joinWithSeparators(words, separators []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	if len(separators) != len(words)+1 {
+		return strings.Join(words, " ")
+	}
+
+	var builder strings.Builder
+	for i, word := range words {
+		builder.WriteString(separators[i])
+		builder.WriteString(word)
+	}
+	builder.WriteString(separators[len(separators)-1])
+
+	return builder.String()
 }

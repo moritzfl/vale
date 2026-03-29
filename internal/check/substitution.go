@@ -16,7 +16,8 @@ import (
 )
 
 type morphologyReplacement struct {
-	partMaps []map[string]string
+	partMaps        []map[string]string
+	useWordTemplate bool
 }
 
 // Substitution switches the values of Swap for its keys.
@@ -41,6 +42,7 @@ type Substitution struct {
 	msgMap   []string
 	morphMap []morphologyReplacement
 	path     string
+	wordTpl  string
 	// Deprecated
 	POS string
 }
@@ -127,13 +129,34 @@ func resolveMorphologyDicpath(cfg *core.Config, dicpath string) string {
 	return normalizeMorphologyPath(dicpath)
 }
 
-func buildMorphologyReplacement(source, replacement string, checker *spell.Checker) (morphologyReplacement, bool) {
+func buildMorphologyReplacement(
+	source,
+	replacement string,
+	checker *spell.Checker,
+	template string,
+) (morphologyReplacement, bool) {
 	if checker == nil {
 		return morphologyReplacement{}, false
 	}
 
-	sourceParts := strings.Split(source, " ")
-	replacementParts := strings.Split(replacement, " ")
+	sourceHasAlternatives := false
+	if options, ok := splitMorphAlternatives(source); ok && len(options) > 1 {
+		sourceHasAlternatives = true
+	}
+	replacementHasAlternatives := false
+	if options, ok := splitMorphAlternatives(replacement); ok && len(options) > 1 {
+		replacementHasAlternatives = true
+	}
+
+	useWordTemplate := !containsRegexSyntax(source) &&
+		!containsRegexSyntax(replacement) &&
+		!sourceHasAlternatives &&
+		!replacementHasAlternatives
+	sourceSplit := splitForMorphology(source, template, useWordTemplate)
+	replacementSplit := splitForMorphology(replacement, template, useWordTemplate)
+
+	sourceParts := sourceSplit.words
+	replacementParts := replacementSplit.words
 	if len(sourceParts) == 0 || len(sourceParts) != len(replacementParts) {
 		return morphologyReplacement{}, false
 	}
@@ -214,15 +237,19 @@ func buildMorphologyReplacement(source, replacement string, checker *spell.Check
 		maps[i] = partMap
 	}
 
-	return morphologyReplacement{partMaps: maps}, true
+	return morphologyReplacement{
+		partMaps:        maps,
+		useWordTemplate: useWordTemplate,
+	}, true
 }
 
-func (m morphologyReplacement) replacementForObserved(observed string) (string, bool) {
+func (m morphologyReplacement) replacementForObserved(observed, template string) (string, bool) {
 	if len(m.partMaps) == 0 {
 		return "", false
 	}
 
-	parts := strings.Split(observed, " ")
+	split := splitForMorphology(observed, template, m.useWordTemplate)
+	parts := split.words
 	if len(parts) != len(m.partMaps) {
 		return "", false
 	}
@@ -236,7 +263,7 @@ func (m morphologyReplacement) replacementForObserved(observed string) (string, 
 		replaced[i] = repl
 	}
 
-	return strings.Join(replaced, " "), true
+	return joinWithSeparators(replaced, split.separators), true
 }
 
 func morphologyCheckerKey(
@@ -316,8 +343,9 @@ func (s *Substitution) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, 
 }
 
 func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error) {
+	s.wordTpl = cfg.WordTemplate
 	regex := makeRegexp(
-		cfg.WordTemplate,
+		s.wordTpl,
 		s.Ignorecase,
 		func() bool { return !s.Nonword },
 		func() string { return "" }, true)
@@ -333,10 +361,10 @@ func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error)
 	for i, regexstr := range s.msgMap {
 		expanded := regexstr
 		if checker != nil {
-			if mapped, ok := buildMorphologyReplacement(regexstr, s.repl[i], checker); ok {
+			if mapped, ok := buildMorphologyReplacement(regexstr, s.repl[i], checker, s.wordTpl); ok {
 				s.morphMap[i] = mapped
 			}
-			expanded = expandForMorphology(regexstr, checker)
+			expanded = expandForMorphology(regexstr, checker, s.wordTpl)
 		}
 
 		opens := strings.Count(expanded, "(")
@@ -458,7 +486,7 @@ func subMsg(s *Substitution, index int, observed string) (string, error) {
 	// the associated replacement string by using the `repl` slice:
 	expected := s.repl[index]
 	if index >= 0 && index < len(s.morphMap) {
-		if inflected, ok := s.morphMap[index].replacementForObserved(observed); ok {
+		if inflected, ok := s.morphMap[index].replacementForObserved(observed, s.wordTpl); ok {
 			expected = inflected
 		}
 	}

@@ -1016,6 +1016,108 @@ func TestMorphologySubstitutionMarkedRegexGroupExpansion(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionPhraseWithPunctuation(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"3\nsetting/A\noption/A\npreference/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.PreferencePhrase",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"setting, option": "preference, preference",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	alerts, runErr := rule.Run(
+		nlp.NewBlock(
+			"These settings, options are configurable.",
+			"These settings, options are configurable.",
+			"text",
+		),
+		&core.File{},
+		cfg,
+	)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Match != "settings, options" {
+		t.Fatalf("expected match %q, got %q", "settings, options", alerts[0].Match)
+	}
+	if alerts[0].Message != "Consider using 'preferences, preferences' instead of 'settings, options'." {
+		t.Fatalf("unexpected message: %q", alerts[0].Message)
+	}
+}
+
+func TestMorphologySubstitutionRegexPatternSkipsWordTemplateSplit(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"2\nsetting/A\noption/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.RegexSkip",
+		"level":        "warning",
+		"message":      "Use '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			`(?<!MyProduct\s)setting option`: "MyProduct preference",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create rule: %v", err)
+	}
+
+	alerts, runErr := rule.Run(
+		nlp.NewBlock("setting options are available.", "setting options are available.", "text"),
+		&core.File{},
+		cfg,
+	)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 0 {
+		t.Fatalf("expected no alerts, got %d", len(alerts))
+	}
+}
+
 func TestMorphologyInvalidDicpath(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {
@@ -1052,7 +1154,7 @@ func TestExpandForMorphology(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		actual := expandForMorphology(test.word, nil)
+		actual := expandForMorphology(test.word, nil, "")
 		if actual != test.expected {
 			t.Errorf("expandForMorphology(%q) = %q, expected %q", test.word, actual, test.expected)
 		}

@@ -322,10 +322,9 @@ func morphologyCheckerKey(
 	resolvedAff := normalizeMorphologyPath(core.FindAsset(cfg, aff))
 	resolvedDic := normalizeMorphologyPath(core.FindAsset(cfg, dic))
 	resolvedDicpath := resolveMorphologyDicpath(cfg, dicpath)
+	resolvedDefaultDicpath := resolvedInternalMorphologyDefaultPath(cfg, rulePath)
 	resolvedSearchPaths := cfg.SearchPaths()
 
-	builder.WriteString(rulePath)
-	builder.WriteByte('\x00')
 	builder.WriteString(aff)
 	builder.WriteByte('\x00')
 	builder.WriteString(resolvedAff)
@@ -337,6 +336,8 @@ func morphologyCheckerKey(
 	builder.WriteString(dicpath)
 	builder.WriteByte('\x00')
 	builder.WriteString(resolvedDicpath)
+	builder.WriteByte('\x00')
+	builder.WriteString(resolvedDefaultDicpath)
 	builder.WriteByte('\x00')
 	if appendDefault {
 		builder.WriteByte('1')
@@ -355,6 +356,14 @@ func morphologyCheckerKey(
 	}
 
 	return builder.String()
+}
+
+func resolvedInternalMorphologyDefaultPath(cfg *core.Config, rulePath string) string {
+	if rulePath != "internal" {
+		return ""
+	}
+
+	return normalizeMorphologyPath(filepath.Join(cfg.StylesPath(), core.DictDir))
 }
 
 func (s *Substitution) makeMorphologyChecker(cfg *core.Config) (*spell.Checker, error) {

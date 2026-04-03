@@ -548,8 +548,8 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	dictDir := t.TempDir()
 	writeMorphDict(t, dictDir, "de_DE", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
 
-	makeRule := func() *Substitution {
-		rule, ruleErr := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+	makeRule := func(path string) *Substitution {
+		rule, ruleErr := NewSubstitution(cfg, map[string]interface{}{
 			"extends":      "substitution",
 			"name":         "German.Gut",
 			"level":        "warning",
@@ -562,15 +562,15 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 			"swap": map[string]string{
 				"gut": "hervorragend",
 			},
-		})
+		}, path)
 		if ruleErr != nil {
 			t.Fatalf("Failed to create rule: %v", ruleErr)
 		}
 		return rule
 	}
 
-	ruleA := makeRule()
-	ruleB := makeRule()
+	ruleA := makeRule("styles/German/GutA.yml")
+	ruleB := makeRule("styles/German/GutB.yml")
 
 	checkerA, err := ruleA.makeMorphologyChecker(cfg)
 	if err != nil {
@@ -586,6 +586,61 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	}
 	if checkerA != checkerB {
 		t.Fatal("expected morphology checker to be reused across rules")
+	}
+}
+
+func TestMorphologyCheckerKeepsInternalDefaultsDistinct(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stylesDir := t.TempDir()
+	if err = os.MkdirAll(filepath.Join(stylesDir, core.DictDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMorphDict(
+		t,
+		filepath.Join(stylesDir, core.DictDir),
+		"custom",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n",
+		"1\ngut/A\n",
+	)
+	cfg.AddStylesPath(stylesDir)
+
+	makeRule := func(path string) *Substitution {
+		rule, ruleErr := NewSubstitution(cfg, map[string]interface{}{
+			"extends":    "substitution",
+			"name":       "German.Gut",
+			"level":      "warning",
+			"message":    "Consider using '%s' instead of '%s'.",
+			"scope":      "text",
+			"ignorecase": false,
+			"morphology": true,
+			"swap": map[string]string{
+				"gut": "hervorragend",
+			},
+		}, path)
+		if ruleErr != nil {
+			t.Fatalf("Failed to create rule: %v", ruleErr)
+		}
+		return rule
+	}
+
+	externalRule := makeRule("styles/German/Gut.yml")
+	internalRule := makeRule("internal")
+
+	externalChecker, err := externalRule.makeMorphologyChecker(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create external checker: %v", err)
+	}
+	internalChecker, err := internalRule.makeMorphologyChecker(cfg)
+	if err != nil {
+		t.Fatalf("Failed to create internal checker: %v", err)
+	}
+
+	if externalChecker == internalChecker {
+		t.Fatal("expected internal default-path checker to remain distinct")
 	}
 }
 

@@ -1544,3 +1544,29 @@ func TestExpandForMorphologyEscapesDictionaryRegexMetaCharacters(t *testing.T) {
 		t.Fatalf("expandForMorphology returned %q", actual)
 	}
 }
+
+func TestParseNamedCaptureGroupHandlesCharacterClassParens(t *testing.T) {
+	tests := []struct {
+		pattern string
+		body    string
+	}{
+		{pattern: `(?<morph_term>[(])`, body: `[(]`},
+		{pattern: `(?<morph_term>[)])`, body: `[)]`},
+	}
+
+	for _, tc := range tests {
+		name, body, end, ok := parseNamedCaptureGroup(tc.pattern, 0)
+		if !ok {
+			t.Fatalf("expected %q to parse", tc.pattern)
+		}
+		if name != "morph_term" {
+			t.Fatalf("expected group name morph_term, got %q", name)
+		}
+		if body != tc.body {
+			t.Fatalf("expected body %q, got %q", tc.body, body)
+		}
+		if end != len(tc.pattern)-1 {
+			t.Fatalf("expected group end %d, got %d", len(tc.pattern)-1, end)
+		}
+	}
+}

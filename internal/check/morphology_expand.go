@@ -260,10 +260,15 @@ func findRegexGroupEnd(pattern string, start int) (int, bool) {
 
 	depth := 0
 	escaped := false
+	inClass := false
+	classAtStart := false
 	for i := start; i < len(pattern); i++ {
 		ch := pattern[i]
 		if escaped {
 			escaped = false
+			if inClass {
+				classAtStart = false
+			}
 			continue
 		}
 		if ch == '\\' {
@@ -271,7 +276,26 @@ func findRegexGroupEnd(pattern string, start int) (int, bool) {
 			continue
 		}
 
+		if inClass {
+			if classAtStart && ch == '^' {
+				continue
+			}
+			if ch == ']' {
+				if classAtStart {
+					classAtStart = false
+					continue
+				}
+				inClass = false
+				continue
+			}
+			classAtStart = false
+			continue
+		}
+
 		switch ch {
+		case '[':
+			inClass = true
+			classAtStart = true
 		case '(':
 			depth++
 		case ')':

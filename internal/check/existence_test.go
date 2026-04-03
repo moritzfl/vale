@@ -280,6 +280,45 @@ func TestExistenceMorphologyExpandsMarkedRegexGroup(t *testing.T) {
 	}
 }
 
+func TestExistenceMorphologyMarkedGroupPreservesBackreferences(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"2\nsetting/A\noption/A\n",
+	)
+
+	rule, err := makeExistenceWithConfig(cfg, baseCheck{
+		"tokens":       []string{`(?<morph_term>setting|option)\s+\k<morph_term>`},
+		"morphology":   true,
+		"nonword":      true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text := "These settings settings are configurable."
+	alerts, runErr := rule.Run(nlp.NewBlock("", text, ""), &core.File{}, cfg)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Match != "settings settings" {
+		t.Fatalf("expected match %q, got %q", "settings settings", alerts[0].Match)
+	}
+}
+
 func FuzzExistenceInit(f *testing.F) {
 	f.Add("hello")
 	f.Fuzz(func(_ *testing.T, s string) {

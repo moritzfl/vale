@@ -171,9 +171,11 @@ func expandMarkedMorphGroups(pattern string, checker *spell.Checker, template st
 
 		if strings.HasPrefix(groupName, morphologyRegexGroupPrefix) {
 			seenMarker = true
-			builder.WriteString("(?:")
+			builder.WriteString("(?<")
+			builder.WriteString(groupName)
+			builder.WriteString(">")
 			builder.WriteString(expandForMorphology(groupBody, checker, template))
-			builder.WriteString(")")
+			builder.WriteByte(')')
 		} else {
 			builder.WriteString(pattern[i : groupEnd+1])
 		}

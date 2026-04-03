@@ -48,6 +48,7 @@ type Substitution struct {
 
 	msgMap   []string
 	morphMap []morphologyReplacement
+	groupMap []int
 	path     string
 	wordTpl  string
 	// Deprecated
@@ -420,6 +421,7 @@ func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error)
 	}
 
 	s.morphMap = make([]morphologyReplacement, len(s.msgMap))
+	s.groupMap = make([]int, len(s.msgMap))
 
 	tokens := ""
 	for i, regexstr := range s.msgMap {
@@ -438,6 +440,7 @@ func (s *Substitution) compilePattern(cfg *core.Config) (*regexp2.Regexp, error)
 				return nil, core.NewE201FromTarget(err.Error(), expanded, s.path)
 			}
 		}
+		s.groupMap[i] = i + 1
 		tokens += `(` + expanded + `)|`
 	}
 
@@ -465,53 +468,57 @@ func (s *Substitution) Run(blk nlp.Block, _ *core.File, cfg *core.Config) ([]cor
 	}
 
 	for _, submat := range s.pattern.FindAllStringSubmatchIndex(txt, -1) {
-		for idx, mat := range submat {
-			if mat != -1 && idx > 0 && idx%2 == 0 {
-				loc := []int{mat, submat[idx+1]}
-
-				converted, convErr := re2Loc(txt, loc)
-				if convErr != nil {
-					return alerts, convErr
-				}
-
-				observed := converted
-				expected, msgErr := subMsg(s, (idx/2)-1, observed)
-				if msgErr != nil {
-					return alerts, msgErr
-				}
-
-				same := matchToken(expected, observed, false)
-				if !same && !isMatch(s.exceptRe, observed) {
-					action := s.Fields().Action
-					message := s.Message
-					if action.Name == "replace" && len(action.Params) == 0 {
-						action.Params = getOptions(expected)
-						if s.Capitalize && observed == core.CapFirst(observed) {
-							cased := []string{}
-							for _, param := range action.Params {
-								cased = append(cased, core.CapFirst(param))
-							}
-							action.Params = cased
-						}
-
-						expected = core.ToSentence(action.Params, "or")
-						// NOTE: For backwards-compatibility, we need to ensure
-						// that we don't double quote.
-						message = convertMessage(message)
-					}
-
-					a, aerr := makeAlert(s.Definition, loc, txt, cfg)
-					if aerr != nil {
-						return alerts, aerr
-					}
-
-					a.Message, a.Description = formatMessages(message,
-						s.Description, expected, observed)
-					a.Action = action
-
-					alerts = append(alerts, a)
-				}
+		for tokenIdx, groupIdx := range s.groupMap {
+			idx := groupIdx * 2
+			if idx+1 >= len(submat) || submat[idx] == -1 {
+				continue
 			}
+
+			loc := []int{submat[idx], submat[idx+1]}
+
+			converted, convErr := re2Loc(txt, loc)
+			if convErr != nil {
+				return alerts, convErr
+			}
+
+			observed := converted
+			expected, msgErr := subMsg(s, tokenIdx, observed)
+			if msgErr != nil {
+				return alerts, msgErr
+			}
+
+			same := matchToken(expected, observed, false)
+			if !same && !isMatch(s.exceptRe, observed) {
+				action := s.Fields().Action
+				message := s.Message
+				if action.Name == "replace" && len(action.Params) == 0 {
+					action.Params = getOptions(expected)
+					if s.Capitalize && observed == core.CapFirst(observed) {
+						cased := []string{}
+						for _, param := range action.Params {
+							cased = append(cased, core.CapFirst(param))
+						}
+						action.Params = cased
+					}
+
+					expected = core.ToSentence(action.Params, "or")
+					// NOTE: For backwards-compatibility, we need to ensure
+					// that we don't double quote.
+					message = convertMessage(message)
+				}
+
+				a, aerr := makeAlert(s.Definition, loc, txt, cfg)
+				if aerr != nil {
+					return alerts, aerr
+				}
+
+				a.Message, a.Description = formatMessages(message,
+					s.Description, expected, observed)
+				a.Action = action
+
+				alerts = append(alerts, a)
+			}
+			break
 		}
 	}
 

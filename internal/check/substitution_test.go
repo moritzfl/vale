@@ -1407,6 +1407,72 @@ func TestMorphologySubstitutionRegexPatternSkipsWordTemplateSplit(t *testing.T) 
 	}
 }
 
+func TestMorphologySubstitutionMarkedGroupPreservesBackreferences(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"3\nsetting/A\noption/A\nwindow\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.MarkedBackref",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"nonword":      true,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			`(?<morph_term>setting|option)\s+\k<morph_term>`: "preference preference",
+			"window": "pane",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create rule: %v", err)
+	}
+
+	text := "settings settings"
+	alerts, runErr := rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Match != "settings settings" {
+		t.Fatalf("expected match %q, got %q", "settings settings", alerts[0].Match)
+	}
+	if !strings.Contains(alerts[0].Message, "preference preference") {
+		t.Fatalf("expected message to contain replacement, got %q", alerts[0].Message)
+	}
+
+	text = "window"
+	alerts, runErr = rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert for later rule, got %d", len(alerts))
+	}
+	if alerts[0].Match != "window" {
+		t.Fatalf("expected later-rule match %q, got %q", "window", alerts[0].Match)
+	}
+	if !strings.Contains(alerts[0].Message, "pane") {
+		t.Fatalf("expected later-rule message to contain replacement, got %q", alerts[0].Message)
+	}
+}
+
 func TestMorphologyInvalidDicpath(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

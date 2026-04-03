@@ -2,12 +2,12 @@ package spell
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -414,18 +414,6 @@ func looksLikeMorphField(field string) bool {
 	return strings.HasPrefix(field, "#") || strings.Contains(field, ":")
 }
 
-func readUTF8(r io.Reader) ([]byte, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	if !utf8.Valid(data) {
-		return nil, fmt.Errorf("dictionary data is not valid UTF-8")
-	}
-
-	return data, nil
-}
-
 // newGoSpellReader creates a speller from io.Readers for
 // Hunspell files
 func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
@@ -435,30 +423,27 @@ func newGoSpellReader(aff, dic io.Reader) (*goSpell, error) {
 }
 
 func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*goSpell, error) {
-	affData, err := readUTF8(aff)
+	affix, err := newDictConfig(aff)
 	if err != nil {
 		return nil, withUTF8Hint(err)
 	}
 
-	affix, err := newDictConfig(bytes.NewReader(affData))
-	if err != nil {
-		return nil, withUTF8Hint(err)
-	}
-
-	dicData, err := readUTF8(dic)
-	if err != nil {
-		return nil, withUTF8Hint(err)
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(dicData))
+	scanner := bufio.NewScanner(dic)
 	// get first line
 	if !scanner.Scan() {
 		return nil, withUTF8Hint(scanner.Err())
 	}
+	if !utf8.ValidString(scanner.Text()) {
+		return nil, withUTF8Hint(fmt.Errorf("dictionary data is not valid UTF-8"))
+	}
+	dictCap := 0
+	if count, convErr := strconv.Atoi(strings.TrimSpace(scanner.Text())); convErr == nil && count > 0 {
+		// The first DIC line is a rough lower bound for generated entries.
+		dictCap = count
+	}
 
 	gs := goSpell{
-		// TODO: Use fixed size from first list?
-		dict:           make(map[string]struct{}),
+		dict:           make(map[string]struct{}, dictCap),
 		compounds:      make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
 		splitter:       newSplitter(affix.WordChars),
 		affix:          affix,
@@ -481,7 +466,11 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 
 	derived := []derivedWord{}
 	for scanner.Scan() {
-		line := cleanDictionaryLine(scanner.Text())
+		rawLine := scanner.Text()
+		if !utf8.ValidString(rawLine) {
+			return nil, withUTF8Hint(fmt.Errorf("dictionary data is not valid UTF-8"))
+		}
+		line := cleanDictionaryLine(rawLine)
 		if line == "" {
 			continue
 		}
@@ -531,18 +520,26 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 			}
 		}
 
+		if !opts.indexMorphology {
+			derived, err = affix.expandWithoutLineage(line, derived)
+			if err != nil {
+				return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %s", line, err.Error()))
+			}
+
+			if len(derived) == 0 {
+				continue
+			}
+			for _, item := range derived {
+				gs.dict[item.word] = struct{}{}
+			}
+			continue
+		}
 		derived, err = affix.expand(line, derived)
 		if err != nil {
 			return nil, withUTF8Hint(fmt.Errorf("unable to process %q: %s", line, err.Error()))
 		}
 
 		if len(derived) == 0 {
-			continue
-		}
-		if !opts.indexMorphology {
-			for _, item := range derived {
-				gs.dict[item.word] = struct{}{}
-			}
 			continue
 		}
 

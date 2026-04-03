@@ -1,10 +1,11 @@
 package spell
 
-func (a dictConfig) expandFlags(word, lineage string, flags []string, out []derivedWord) []derivedWord {
-	return a.expandFlagsWithKey(word, lineage, "", flags, out)
-}
-
-func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags []string, out []derivedWord) []derivedWord {
+func (a dictConfig) expandFlags(
+	state derivedWord,
+	withLineage bool,
+	flags []string,
+	out []derivedWord,
+) []derivedWord {
 	prefixes := make([]flaggedAffix, 0, 5)
 	suffixes := make([]flaggedAffix, 0, 5)
 	for _, key := range flags {
@@ -14,7 +15,7 @@ func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags [
 			continue
 		}
 		if !af.CrossProduct {
-			out = af.expand(word, lineage, lineageKey, key, out)
+			out = af.expand(state, key, withLineage, out)
 			continue
 		}
 		if af.Type == Prefix {
@@ -25,15 +26,15 @@ func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags [
 	}
 
 	for _, suf := range suffixes {
-		out = suf.affix.expand(word, lineage, lineageKey, suf.flag, out)
+		out = suf.affix.expand(state, suf.flag, withLineage, out)
 	}
 	for _, pre := range prefixes {
-		prewords := pre.affix.expand(word, lineage, lineageKey, pre.flag, nil)
+		prewords := pre.affix.expand(state, pre.flag, withLineage, nil)
 		out = append(out, prewords...)
 
 		for _, suf := range suffixes {
 			for _, w := range prewords {
-				derived := suf.affix.expand(w.word, w.lineage, w.lineageKey, suf.flag, nil)
+				derived := suf.affix.expand(w, suf.flag, withLineage, nil)
 				for i := range derived {
 					derived[i].continuationFlags = mergeFlags(
 						w.continuationFlags,
@@ -52,6 +53,18 @@ func (a dictConfig) expandFlagsWithKey(word, lineage, lineageKey string, flags [
 //
 // This also supports CompoundRule flags.
 func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, error) {
+	return a.expandWithLineageMode(wordAffix, true, out)
+}
+
+func (a dictConfig) expandWithoutLineage(wordAffix string, out []derivedWord) ([]derivedWord, error) {
+	return a.expandWithLineageMode(wordAffix, false, out)
+}
+
+func (a dictConfig) expandWithLineageMode(
+	wordAffix string,
+	withLineage bool,
+	out []derivedWord,
+) ([]derivedWord, error) {
 	out = out[:0]
 	word, keyString, hasFlags, err := a.splitWordFlags(wordAffix)
 	if err != nil {
@@ -98,19 +111,19 @@ func (a dictConfig) expand(wordAffix string, out []derivedWord) ([]derivedWord, 
 		current := stateQueue[0]
 		stateQueue = stateQueue[1:]
 
-		expanded := a.expandFlagsWithKey(
-			current.word,
-			current.lineage,
-			current.lineageKey,
+		expanded := a.expandFlags(
+			current,
+			withLineage,
 			current.continuationFlags,
 			nil,
 		)
 		for _, item := range expanded {
-			out = append(out, derivedWord{
-				word:       item.word,
-				lineage:    item.lineage,
-				lineageKey: item.lineageKey,
-			})
+			next := derivedWord{word: item.word}
+			if withLineage {
+				next.lineage = item.lineage
+				next.lineageKey = item.lineageKey
+			}
+			out = append(out, next)
 
 			if len(item.continuationFlags) == 0 {
 				continue

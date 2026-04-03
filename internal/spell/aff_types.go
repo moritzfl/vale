@@ -23,16 +23,24 @@ type affix struct {
 }
 
 // expand provides all variations of a given word based on this affix rule.
-func (a affix) expand(word, lineage, lineageKey, flag string, out []derivedWord) []derivedWord {
+func (a affix) expand(state derivedWord, flag string, withLineage bool, out []derivedWord) []derivedWord {
+	word := state.word
+	lineage := state.lineage
+	lineageKey := state.lineageKey
+
 	for i, r := range a.Rules {
 		if r.matcher != nil && !r.matcher.MatchString(word) {
 			continue
 		}
 
-		step := lineageStep(flag, a.Type, i)
-		keyStep := lineageKeyStep(flag, a.Type, r)
-		nextLineage := appendLineage(lineage, step)
-		nextLineageKey := appendLineage(lineageKey, keyStep)
+		nextLineage := ""
+		nextLineageKey := ""
+		if withLineage {
+			step := lineageStep(flag, a.Type, i)
+			keyStep := lineageKeyStep(flag, a.Type, r)
+			nextLineage = appendLineage(lineage, step)
+			nextLineageKey = appendLineage(lineageKey, keyStep)
+		}
 		if a.Type == Prefix {
 			stripWord := word
 			if r.Strip != "" {
@@ -89,6 +97,7 @@ type dictConfig struct {
 	CompoundMin       int64
 	compoundMap       map[string][]string
 	flagAliases       [][]string
+	resolvedFlagCache map[string][]string
 	flagMode          flagMode
 	NoSuggestFlag     string
 }

@@ -199,11 +199,23 @@ func (a dictConfig) resolveAliasFlags(raw string) ([]string, bool) {
 }
 
 func (a dictConfig) resolveDictionaryFlags(raw string) ([]string, error) {
-	if flags, ok := a.resolveAliasFlags(raw); ok {
+	if flags, ok := a.resolvedFlagCache[raw]; ok {
 		return flags, nil
 	}
 
-	return a.parseFlags(raw)
+	var flags []string
+	var err error
+	if flags, ok := a.resolveAliasFlags(raw); ok {
+		a.resolvedFlagCache[raw] = flags
+		return flags, nil
+	}
+	flags, err = a.parseFlags(raw)
+	if err != nil {
+		return nil, err
+	}
+	a.resolvedFlagCache[raw] = flags
+
+	return flags, nil
 }
 
 func (a dictConfig) splitAffixAndContinuation(raw string) (string, []string, error) {

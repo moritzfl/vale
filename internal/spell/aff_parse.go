@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 func isCrossProduct(val string) (bool, error) {
@@ -22,18 +23,23 @@ func isCrossProduct(val string) (bool, error) {
 // newDictConfig reads an Hunspell AFF file.
 func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 	aff := dictConfig{
-		Flag:         "ASCII",
-		flagMode:     flagASCII,
-		AffixMap:     make(map[string]affix),
-		CompoundOnly: make(map[string]struct{}),
-		compoundMap:  make(map[string][]string),
-		CompoundMin:  3, // default in Hunspell
+		Flag:              "ASCII",
+		flagMode:          flagASCII,
+		AffixMap:          make(map[string]affix),
+		CompoundOnly:      make(map[string]struct{}),
+		compoundMap:       make(map[string][]string),
+		resolvedFlagCache: make(map[string][]string),
+		CompoundMin:       3, // default in Hunspell
 	}
 
 	expectedAF := -1
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		line := trimAFFLine(scanner.Text())
+		rawLine := scanner.Text()
+		if !utf8.ValidString(rawLine) {
+			return nil, fmt.Errorf("dictionary data is not valid UTF-8")
+		}
+		line := trimAFFLine(rawLine)
 		if line == "" {
 			continue
 		}

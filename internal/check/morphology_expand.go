@@ -2,6 +2,7 @@ package check
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -60,7 +61,7 @@ func expandForMorphology(token string, checker *spell.Checker, template string) 
 		for _, part := range split.words {
 			partForms := checker.Expand(part)
 			if len(partForms) > 1 {
-				result = append(result, toAlternation(partForms))
+				result = append(result, toLiteralAlternation(partForms))
 				expanded = true
 			} else {
 				result = append(result, part)
@@ -77,11 +78,20 @@ func expandForMorphology(token string, checker *spell.Checker, template string) 
 		return token
 	}
 
-	return toAlternation(forms)
+	return toLiteralAlternation(forms)
 }
 
 func toAlternation(forms []string) string {
 	return "(?:" + strings.Join(forms, "|") + ")"
+}
+
+func toLiteralAlternation(forms []string) string {
+	escaped := make([]string, len(forms))
+	for i, form := range forms {
+		escaped[i] = regexp.QuoteMeta(form)
+	}
+
+	return toAlternation(escaped)
 }
 
 func splitEscapedAlternatives(pattern string) []string {

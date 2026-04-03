@@ -441,6 +441,61 @@ func TestMorphologySubstitutionUsesRussianLineageIdentityForReplacement(t *testi
 	}
 }
 
+func TestMorphologySubstitutionEscapesDictionaryRegexMetaCharacters(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"1\nC++/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "Vale.Terms",
+		"level":        "error",
+		"message":      "Use '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"nonword":      true,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"C++": "Rust",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create rule: %v", err)
+	}
+
+	if !strings.Contains(rule.Pattern(), `C\+\+`) {
+		t.Fatalf("expected escaped punctuation in compiled pattern, got %q", rule.Pattern())
+	}
+	
+	// C++s might not be a real word, but its the best example I could think of :)
+	if !strings.Contains(rule.Pattern(), `C\+\+s`) {
+		t.Fatalf("expected escaped inflected form in compiled pattern, got %q", rule.Pattern())
+	}
+
+	alerts, err := rule.Run(nlp.NewBlock("We still ship C++s.", "We still ship C++s.", "text"), &core.File{}, cfg)
+	if err != nil {
+		t.Fatalf("failed to run rule: %v", err)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if !strings.Contains(alerts[0].Message, "Rust") {
+		t.Fatalf("unexpected message %q", alerts[0].Message)
+	}
+}
+
 func TestSubstitutionWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {
@@ -1158,5 +1213,34 @@ func TestExpandForMorphology(t *testing.T) {
 		if actual != test.expected {
 			t.Errorf("expandForMorphology(%q) = %q, expected %q", test.word, actual, test.expected)
 		}
+	}
+}
+
+func TestExpandForMorphologyEscapesDictionaryRegexMetaCharacters(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"1\nC++/A\n",
+	)
+
+	checker, err := makeSpeller(&Spelling{
+		Dictionaries: []string{"en_US"},
+		Dicpath:      dictDir,
+	}, cfg, "")
+	if err != nil {
+		t.Fatalf("failed to create checker: %v", err)
+	}
+    // C++s might not be a real word, but its the best example I could think of :)
+	actual := expandForMorphology("C++", checker, cfg.WordTemplate)
+	if actual != `(?:C\+\+|C\+\+s)` {
+		t.Fatalf("expandForMorphology returned %q", actual)
 	}
 }

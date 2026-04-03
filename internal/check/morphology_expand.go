@@ -119,14 +119,42 @@ func toLiteralAlternation(forms []string) string {
 
 func splitEscapedAlternatives(pattern string) []string {
 	options := []string{}
+	var current strings.Builder
+	escaped := false
 
-	// Ignore escaped pipes while splitting.
-	temp := strings.ReplaceAll(pattern, `\|`, "PIPE")
-	for _, option := range strings.Split(temp, "|") {
-		if option == "" {
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+
+		if escaped {
+			if ch != '|' {
+				current.WriteByte('\\')
+			}
+			current.WriteByte(ch)
+			escaped = false
 			continue
 		}
-		options = append(options, strings.ReplaceAll(option, "PIPE", `|`))
+
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+
+		if ch == '|' {
+			if current.Len() > 0 {
+				options = append(options, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(ch)
+	}
+
+	if escaped {
+		current.WriteByte('\\')
+	}
+	if current.Len() > 0 {
+		options = append(options, current.String())
 	}
 
 	return options

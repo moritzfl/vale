@@ -107,6 +107,14 @@ type Inflection struct {
 	LineageKey string
 }
 
+// DictionaryInflections contains the inflections contributed by a single
+// loaded dictionary together with whether that dictionary recognizes the base
+// lookup term.
+type DictionaryInflections struct {
+	Present     bool
+	Inflections []Inflection
+}
+
 // NewChecker creates a spell checker from multiple
 // Hunspell-compatible dictionaries.
 func NewChecker(options ...CheckerOption) (*Checker, error) {
@@ -223,6 +231,29 @@ func (m *Checker) ExpandWithLineage(word string) []Inflection {
 	}
 
 	return inflections
+}
+
+// ExpandWithLineageByDictionary returns one expansion group per loaded
+// dictionary. Callers can use this to prefer matches where both sides of a
+// substitution are present in the same dictionary before falling back to the
+// merged checker view.
+func (m *Checker) ExpandWithLineageByDictionary(word string) []DictionaryInflections {
+	groups := make([]DictionaryInflections, 0, len(m.checkers))
+
+	for _, checker := range m.checkers {
+		present := checker.spell(word)
+		expanded := checker.ExpandWithLineage(word)
+		if !present && len(expanded) == 1 && expanded[0].Form == word && expanded[0].Lineage == "" {
+			expanded = nil
+		}
+
+		groups = append(groups, DictionaryInflections{
+			Present:     present,
+			Inflections: expanded,
+		})
+	}
+
+	return groups
 }
 
 // Suggest returns a list of suggestions for a given word.

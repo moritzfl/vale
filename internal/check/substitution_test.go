@@ -478,7 +478,7 @@ func TestMorphologySubstitutionEscapesDictionaryRegexMetaCharacters(t *testing.T
 	if !strings.Contains(rule.Pattern(), `C\+\+`) {
 		t.Fatalf("expected escaped punctuation in compiled pattern, got %q", rule.Pattern())
 	}
-	
+
 	// C++s might not be a real word, but its the best example I could think of :)
 	if !strings.Contains(rule.Pattern(), `C\+\+s`) {
 		t.Fatalf("expected escaped inflected form in compiled pattern, got %q", rule.Pattern())
@@ -885,6 +885,67 @@ func TestMorphologySubstitutionCombinesExplicitDictionaries(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionPrefersSameDictionaryReplacement(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"dictA",
+		"SET UTF-8\nSFX D Y 1\nSFX D e ed e\n",
+		"1\nstreamline/D\n",
+	)
+	writeMorphDict(
+		t,
+		dictDir,
+		"dictB",
+		"SET UTF-8\nSFX D Y 1\nSFX D e en e\n",
+		"2\noptimize/D\nstreamline/D\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "Custom.Optimize",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"dictA", "dictB"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"optimize": "streamline",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	expected, err := subMsg(rule, 0, "optimizen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected != "streamlinen" {
+		t.Fatalf("expected same-dictionary replacement 'streamlinen', got %q", expected)
+	}
+
+	text := "We optimizen the workflow."
+	alerts, err := rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if err != nil {
+		t.Fatalf("Failed to run rule: %v", err)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if !strings.Contains(alerts[0].Message, "streamlinen") {
+		t.Fatalf("expected message to prefer same-dictionary replacement, got %q", alerts[0].Message)
+	}
+}
+
 func TestMorphologySubstitutionPhraseExpansion(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {
@@ -1238,7 +1299,7 @@ func TestExpandForMorphologyEscapesDictionaryRegexMetaCharacters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create checker: %v", err)
 	}
-    // C++s might not be a real word, but its the best example I could think of :)
+	// C++s might not be a real word, but its the best example I could think of :)
 	actual := expandForMorphology("C++", checker, cfg.WordTemplate)
 	if actual != `(?:C\+\+|C\+\+s)` {
 		t.Fatalf("expandForMorphology returned %q", actual)

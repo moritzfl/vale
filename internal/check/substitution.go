@@ -20,6 +20,13 @@ type morphologyReplacement struct {
 	useWordTemplate bool
 }
 
+type morphologyLineageMap struct {
+	byLineage           map[string]string
+	byLineageKey        map[string]string
+	ambiguousLineageKey map[string]struct{}
+	hasMappings         bool
+}
+
 // Substitution switches the values of Swap for its keys.
 type Substitution struct {
 	Definition   `mapstructure:",squash"`
@@ -179,58 +186,41 @@ func buildMorphologyReplacement(
 			partMap[strings.ToLower(option)] = replPart
 		}
 
-		replacementInflections := checker.ExpandWithLineage(replPart)
-
-		replacementByLineage := map[string]string{}
-		replacementByLineageKey := map[string]string{}
-		ambiguousLineageKeys := map[string]struct{}{}
-		for _, inflection := range replacementInflections {
-			if inflection.Lineage == "" {
-				if inflection.LineageKey == "" {
-					continue
-				}
-			} else if _, ok := replacementByLineage[inflection.Lineage]; !ok {
-				replacementByLineage[inflection.Lineage] = inflection.Form
-			}
-
-			if inflection.LineageKey == "" {
+		globalReplacementMap := buildMorphologyLineageMap(checker.ExpandWithLineage(replPart))
+		replacementByDictionary := checker.ExpandWithLineageByDictionary(replPart)
+		preferredReplacementMaps := make([]morphologyLineageMap, len(replacementByDictionary))
+		for dictIdx, group := range replacementByDictionary {
+			if !group.Present {
 				continue
 			}
-			if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; ambiguous {
-				continue
-			}
-			if existing, ok := replacementByLineageKey[inflection.LineageKey]; ok && existing != inflection.Form {
-				delete(replacementByLineageKey, inflection.LineageKey)
-				ambiguousLineageKeys[inflection.LineageKey] = struct{}{}
-				continue
-			}
-			replacementByLineageKey[inflection.LineageKey] = inflection.Form
+			preferredReplacementMaps[dictIdx] = buildMorphologyLineageMap(group.Inflections)
 		}
 
 		for _, sourceTerm := range sourceAlternatives {
-			sourceInflections := checker.ExpandWithLineage(sourceTerm)
-			for _, inflection := range sourceInflections {
-				key := strings.ToLower(inflection.Form)
-				if _, exists := partMap[key]; exists {
+			sourceByDictionary := checker.ExpandWithLineageByDictionary(sourceTerm)
+			for dictIdx, group := range sourceByDictionary {
+				if !group.Present {
 					continue
 				}
 
-				if inflection.Lineage != "" {
-					if mapped, ok := replacementByLineage[inflection.Lineage]; ok {
+				replacementMap := globalReplacementMap
+				if dictIdx < len(preferredReplacementMaps) && preferredReplacementMaps[dictIdx].hasMappings {
+					replacementMap = preferredReplacementMaps[dictIdx]
+				}
+
+				for _, inflection := range group.Inflections {
+					key := strings.ToLower(inflection.Form)
+					if _, exists := partMap[key]; exists {
+						continue
+					}
+
+					if mapped, ok := replacementMap.lookup(inflection); ok {
 						partMap[key] = mapped
 						continue
 					}
-				}
-				if inflection.LineageKey != "" {
-					if _, ambiguous := ambiguousLineageKeys[inflection.LineageKey]; !ambiguous {
-						if mapped, ok := replacementByLineageKey[inflection.LineageKey]; ok {
-							partMap[key] = mapped
-							continue
-						}
-					}
-				}
 
-				partMap[key] = replPart
+					partMap[key] = replPart
+				}
 			}
 		}
 
@@ -241,6 +231,58 @@ func buildMorphologyReplacement(
 		partMaps:        maps,
 		useWordTemplate: useWordTemplate,
 	}, true
+}
+
+func buildMorphologyLineageMap(inflections []spell.Inflection) morphologyLineageMap {
+	mapped := morphologyLineageMap{
+		byLineage:           map[string]string{},
+		byLineageKey:        map[string]string{},
+		ambiguousLineageKey: map[string]struct{}{},
+	}
+
+	for _, inflection := range inflections {
+		if inflection.Lineage == "" {
+			if inflection.LineageKey == "" {
+				continue
+			}
+		} else if _, ok := mapped.byLineage[inflection.Lineage]; !ok {
+			mapped.byLineage[inflection.Lineage] = inflection.Form
+			mapped.hasMappings = true
+		}
+
+		if inflection.LineageKey == "" {
+			continue
+		}
+		if _, ambiguous := mapped.ambiguousLineageKey[inflection.LineageKey]; ambiguous {
+			continue
+		}
+		if existing, ok := mapped.byLineageKey[inflection.LineageKey]; ok && existing != inflection.Form {
+			delete(mapped.byLineageKey, inflection.LineageKey)
+			mapped.ambiguousLineageKey[inflection.LineageKey] = struct{}{}
+			continue
+		}
+		mapped.byLineageKey[inflection.LineageKey] = inflection.Form
+		mapped.hasMappings = true
+	}
+
+	return mapped
+}
+
+func (m morphologyLineageMap) lookup(inflection spell.Inflection) (string, bool) {
+	if inflection.Lineage != "" {
+		if mapped, ok := m.byLineage[inflection.Lineage]; ok {
+			return mapped, true
+		}
+	}
+	if inflection.LineageKey != "" {
+		if _, ambiguous := m.ambiguousLineageKey[inflection.LineageKey]; !ambiguous {
+			if mapped, ok := m.byLineageKey[inflection.LineageKey]; ok {
+				return mapped, true
+			}
+		}
+	}
+
+	return "", false
 }
 
 func (m morphologyReplacement) replacementForObserved(observed, template string) (string, bool) {

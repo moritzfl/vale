@@ -70,6 +70,92 @@ func (s *goSpell) inputConversion(raw []byte) string {
 	return s.ireplacer.Replace(sraw)
 }
 
+type iconvInverseRule struct {
+	normalized string
+	rawForms   []string
+}
+
+func (s *goSpell) inputVariants(word string) []string {
+	if s.affix == nil || len(s.affix.IconvReplacements) == 0 {
+		return []string{word}
+	}
+
+	rules := buildInverseIconvRules(s.affix.IconvReplacements)
+	if len(rules) == 0 {
+		return []string{word}
+	}
+
+	variants := []string{word}
+	seen := map[string]struct{}{word: {}}
+
+	for idx := 0; idx < len(variants); idx++ {
+		current := variants[idx]
+		for _, rule := range rules {
+			start := 0
+			for {
+				rel := strings.Index(current[start:], rule.normalized)
+				if rel < 0 {
+					break
+				}
+
+				pos := start + rel
+				for _, raw := range rule.rawForms {
+					candidate := current[:pos] + raw + current[pos+len(rule.normalized):]
+					if _, ok := seen[candidate]; ok {
+						continue
+					}
+					if s.inputConversion([]byte(candidate)) != word {
+						continue
+					}
+
+					seen[candidate] = struct{}{}
+					variants = append(variants, candidate)
+				}
+
+				start = pos + len(rule.normalized)
+			}
+		}
+	}
+
+	return variants
+}
+
+func buildInverseIconvRules(replacements []string) []iconvInverseRule {
+	if len(replacements) == 0 {
+		return nil
+	}
+
+	indexByNormalized := map[string]int{}
+	rules := make([]iconvInverseRule, 0, len(replacements)/2)
+	for i := 0; i+1 < len(replacements); i += 2 {
+		raw := replacements[i]
+		normalized := replacements[i+1]
+		if normalized == "" || raw == "" {
+			continue
+		}
+
+		idx, ok := indexByNormalized[normalized]
+		if !ok {
+			indexByNormalized[normalized] = len(rules)
+			rules = append(rules, iconvInverseRule{normalized: normalized, rawForms: []string{raw}})
+			continue
+		}
+
+		exists := false
+		for _, existing := range rules[idx].rawForms {
+			if existing == raw {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			rules[idx].rawForms = append(rules[idx].rawForms, raw)
+		}
+	}
+
+	return rules
+}
+
 // addWordRaw adds a single word to the internal dictionary without modifications
 // returns true if added
 // return false is already exists

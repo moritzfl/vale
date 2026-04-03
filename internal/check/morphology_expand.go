@@ -59,7 +59,7 @@ func expandForMorphology(token string, checker *spell.Checker, template string) 
 		result := make([]string, 0, len(split.words))
 		expanded := false
 		for _, part := range split.words {
-			partForms := checker.Expand(part)
+			partForms := morphologyInputForms(part, checker)
 			if len(partForms) > 1 {
 				result = append(result, toLiteralAlternation(partForms))
 				expanded = true
@@ -73,12 +73,35 @@ func expandForMorphology(token string, checker *spell.Checker, template string) 
 		return token
 	}
 
-	forms := checker.Expand(token)
+	forms := morphologyInputForms(token, checker)
 	if len(forms) <= 1 {
 		return token
 	}
 
 	return toLiteralAlternation(forms)
+}
+
+func morphologyInputForms(token string, checker *spell.Checker) []string {
+	normalized := checker.Convert(token)
+	forms := checker.Expand(normalized)
+	seen := map[string]struct{}{}
+	variants := make([]string, 0, len(forms))
+
+	for _, form := range forms {
+		for _, variant := range checker.InputVariants(form) {
+			if _, ok := seen[variant]; ok {
+				continue
+			}
+			seen[variant] = struct{}{}
+			variants = append(variants, variant)
+		}
+	}
+
+	if len(variants) == 0 {
+		return []string{token}
+	}
+
+	return variants
 }
 
 func toAlternation(forms []string) string {

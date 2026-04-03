@@ -291,6 +291,29 @@ func (m *Checker) Convert(s string) string {
 	return s
 }
 
+// InputVariants returns raw input variants that normalize to the provided form
+// through any loaded dictionary's ICONV rules.
+func (m *Checker) InputVariants(word string) []string {
+	seen := map[string]struct{}{}
+	variants := make([]string, 0, len(m.checkers)+1)
+
+	for _, checker := range m.checkers {
+		for _, variant := range checker.inputVariants(word) {
+			if _, ok := seen[variant]; ok {
+				continue
+			}
+			seen[variant] = struct{}{}
+			variants = append(variants, variant)
+		}
+	}
+
+	if len(variants) == 0 {
+		return []string{word}
+	}
+
+	return variants
+}
+
 // AddWordListFile reads in a word list file
 func (m *Checker) AddWordListFile(name string) error {
 	for _, checker := range m.checkers {

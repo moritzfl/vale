@@ -246,6 +246,63 @@ func TestMorphologySubstitutionUsesDictionaries(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionSupportsICONVVariants(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"en_US",
+		"SET UTF-8\nICONV 2\nICONV ’ '\nICONV ‘ '\nSFX A Y 1\nSFX A 0 s .\n",
+		"2\ndon't/A\ncan't/A\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "English.Donts",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"en_US"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"don't": "can't",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	expected, err := subMsg(rule, 0, "don’ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected != "can'ts" {
+		t.Fatalf("expected inflected replacement %q, got %q", "can'ts", expected)
+	}
+
+	text := "We keep a list of don’ts."
+	alerts, runErr := rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if runErr != nil {
+		t.Fatalf("run failed: %v", runErr)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Match != "don’ts" {
+		t.Fatalf("expected match %q, got %q", "don’ts", alerts[0].Match)
+	}
+	if !strings.Contains(alerts[0].Message, "can'ts") {
+		t.Fatalf("expected message to contain inflected replacement, got %q", alerts[0].Message)
+	}
+}
+
 func TestMorphologySubstitutionInflectsReplacement(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

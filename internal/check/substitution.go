@@ -183,11 +183,15 @@ func buildMorphologyReplacement(
 
 		partMap := map[string]string{}
 		for _, option := range sourceAlternatives {
-			partMap[strings.ToLower(option)] = replPart
+			normalizedOption := checker.Convert(option)
+			for _, variant := range checker.InputVariants(normalizedOption) {
+				partMap[strings.ToLower(variant)] = replPart
+			}
 		}
 
-		globalReplacementMap := buildMorphologyLineageMap(checker.ExpandWithLineage(replPart))
-		replacementByDictionary := checker.ExpandWithLineageByDictionary(replPart)
+		normalizedReplacement := checker.Convert(replPart)
+		globalReplacementMap := buildMorphologyLineageMap(checker.ExpandWithLineage(normalizedReplacement))
+		replacementByDictionary := checker.ExpandWithLineageByDictionary(normalizedReplacement)
 		preferredReplacementMaps := make([]morphologyLineageMap, len(replacementByDictionary))
 		for dictIdx, group := range replacementByDictionary {
 			if !group.Present {
@@ -197,7 +201,8 @@ func buildMorphologyReplacement(
 		}
 
 		for _, sourceTerm := range sourceAlternatives {
-			sourceByDictionary := checker.ExpandWithLineageByDictionary(sourceTerm)
+			normalizedSource := checker.Convert(sourceTerm)
+			sourceByDictionary := checker.ExpandWithLineageByDictionary(normalizedSource)
 			for dictIdx, group := range sourceByDictionary {
 				if !group.Present {
 					continue
@@ -210,24 +215,24 @@ func buildMorphologyReplacement(
 				}
 
 				for _, inflection := range group.Inflections {
-					key := strings.ToLower(inflection.Form)
-					if _, exists := partMap[key]; exists {
-						continue
+					mapped := replPart
+					if hasPreferredMap {
+						if preferredReplacement, ok := preferredMap.lookup(inflection); ok {
+							mapped = preferredReplacement
+						} else if globalReplacement, ok := globalReplacementMap.lookup(inflection); ok {
+							mapped = globalReplacement
+						}
+					} else if globalReplacement, ok := globalReplacementMap.lookup(inflection); ok {
+						mapped = globalReplacement
 					}
 
-					if hasPreferredMap {
-						if mapped, ok := preferredMap.lookup(inflection); ok {
-							partMap[key] = mapped
+					for _, variant := range checker.InputVariants(inflection.Form) {
+						key := strings.ToLower(variant)
+						if _, exists := partMap[key]; exists {
 							continue
 						}
-					}
-
-					if mapped, ok := globalReplacementMap.lookup(inflection); ok {
 						partMap[key] = mapped
-						continue
 					}
-
-					partMap[key] = replPart
 				}
 			}
 		}

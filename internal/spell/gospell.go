@@ -25,6 +25,7 @@ type goSpell struct {
 	dict map[string]struct{}
 
 	ireplacer         *strings.Replacer
+	iconvInverseRules []iconvInverseRule
 	compounds         []*regexp.Regexp
 	splitter          *splitter
 	affix             *dictConfig
@@ -76,12 +77,7 @@ type iconvInverseRule struct {
 }
 
 func (s *goSpell) inputVariants(word string) []string {
-	if s.affix == nil || len(s.affix.IconvReplacements) == 0 {
-		return []string{word}
-	}
-
-	rules := buildInverseIconvRules(s.affix.IconvReplacements)
-	if len(rules) == 0 {
+	if len(s.iconvInverseRules) == 0 {
 		return []string{word}
 	}
 
@@ -90,7 +86,7 @@ func (s *goSpell) inputVariants(word string) []string {
 
 	for idx := 0; idx < len(variants); idx++ {
 		current := variants[idx]
-		for _, rule := range rules {
+		for _, rule := range s.iconvInverseRules {
 			start := 0
 			for {
 				rel := strings.Index(current[start:], rule.normalized)
@@ -529,11 +525,12 @@ func newGoSpellReaderWithOptions(aff, dic io.Reader, opts goSpellLoadOptions) (*
 	}
 
 	gs := goSpell{
-		dict:           make(map[string]struct{}, dictCap),
-		compounds:      make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
-		splitter:       newSplitter(affix.WordChars),
-		affix:          affix,
-		lazyMorphology: opts.lazyMorphology,
+		dict:              make(map[string]struct{}, dictCap),
+		iconvInverseRules: buildInverseIconvRules(affix.IconvReplacements),
+		compounds:         make([]*regexp.Regexp, 0, len(affix.CompoundRule)),
+		splitter:          newSplitter(affix.WordChars),
+		affix:             affix,
+		lazyMorphology:    opts.lazyMorphology,
 	}
 	if opts.lazyMorphology {
 		gs.lazyBaseEntries = make(map[string][]lazyDictionaryEntry)

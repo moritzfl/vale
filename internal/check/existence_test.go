@@ -65,7 +65,7 @@ func TestExistenceMorphologyMatchesInflectedToken(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
+		"SET UTF-8\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
 		"1\nutilize/A\n",
 	)
 
@@ -139,7 +139,7 @@ func TestExistenceWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
+		"SET UTF-8\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
 		"1\nutilize/A\n",
 	)
 
@@ -175,7 +175,7 @@ func TestExistenceMorphologyExpandsLiteralAlternation(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\npreference/A\n",
 	)
 
@@ -214,7 +214,7 @@ func TestExistenceMorphologyExpandsLiteralPhraseAlternation(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\nwindow/A\noption/A\n",
 	)
 
@@ -253,7 +253,7 @@ func TestExistenceMorphologyExpandsMarkedRegexGroup(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\npreference/A\n",
 	)
 
@@ -291,7 +291,7 @@ func TestExistenceMorphologyMarkedGroupPreservesBackreferences(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"2\nsetting/A\noption/A\n",
 	)
 

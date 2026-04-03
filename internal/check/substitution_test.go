@@ -314,7 +314,7 @@ func TestMorphologySubstitutionInflectsReplacement(t *testing.T) {
 		t,
 		dictDir,
 		"de_DE",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n",
 		"2\ngut/A\nhervorragend/A\n",
 	)
 
@@ -356,7 +356,7 @@ func TestMorphologySubstitutionUsesAffixLineageForReplacement(t *testing.T) {
 		t,
 		dictDir,
 		"custom",
-		"SET ISO8859-1\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n",
+		"SET UTF-8\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n",
 		"2\noptimize/DG\nstreamline/GD\n",
 	)
 
@@ -509,7 +509,7 @@ func TestMorphologySubstitutionEscapesDictionaryRegexMetaCharacters(t *testing.T
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"1\nC++/A\n",
 	)
 
@@ -564,7 +564,7 @@ func TestSubstitutionWithoutMorphologyDoesNotMatchInflectedToken(t *testing.T) {
 		t,
 		dictDir,
 		"de_DE",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n",
 		"2\ngut/A\nhervorragend/A\n",
 	)
 
@@ -603,7 +603,7 @@ func TestMorphologyCheckerIsReusedAcrossRules(t *testing.T) {
 	}
 
 	dictDir := t.TempDir()
-	writeMorphDict(t, dictDir, "de_DE", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictDir, "de_DE", "SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
 
 	makeRule := func(path string) *Substitution {
 		rule, ruleErr := NewSubstitution(cfg, map[string]interface{}{
@@ -660,7 +660,7 @@ func TestMorphologyCheckerKeepsInternalDefaultsDistinct(t *testing.T) {
 		t,
 		filepath.Join(stylesDir, core.DictDir),
 		"custom",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n",
 		"1\ngut/A\n",
 	)
 	cfg.AddStylesPath(stylesDir)
@@ -719,8 +719,8 @@ func TestMorphologyCheckerSeparatesRelativeDicpathsByWorkingDirectory(t *testing
 		t.Fatal(err)
 	}
 
-	writeMorphDict(t, dictA, "custom", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
-	writeMorphDict(t, dictB, "custom", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 er .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictA, "custom", "SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictB, "custom", "SET UTF-8\nSFX A Y 1\nSFX A 0 er .\n", "1\ngut/A\n")
 
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -781,7 +781,7 @@ func TestMorphologyCheckerConcurrentCreation(t *testing.T) {
 	}
 
 	dictDir := t.TempDir()
-	writeMorphDict(t, dictDir, "de_DE", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictDir, "de_DE", "SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
 
 	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
 		"extends":      "substitution",
@@ -855,7 +855,7 @@ func TestMorphologyCheckerUsesLazyDictionaryLoading(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
+		"SET UTF-8\nSFX A Y 2\nSFX A 0 d e\nSFX A e ing e\n",
 		"1\nutilize/A\n",
 	)
 
@@ -903,7 +903,7 @@ func TestMorphologySubstitutionRequiresExplicitDictionariesLikeSpelling(t *testi
 	}
 
 	dictDir := t.TempDir()
-	writeMorphDict(t, dictDir, "custom", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\nfoobase/A\n")
+	writeMorphDict(t, dictDir, "custom", "SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n", "1\nfoobase/A\n")
 
 	withoutDictionaries, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
 		"extends":    "substitution",
@@ -965,8 +965,8 @@ func TestMorphologySubstitutionCombinesExplicitDictionaries(t *testing.T) {
 	}
 
 	dictDir := t.TempDir()
-	writeMorphDict(t, dictDir, "de_DE", "SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
-	writeMorphDict(t, dictDir, "de_AT", "SET ISO8859-1\nSFX B Y 1\nSFX B 0 er .\n", "1\ngut/B\n")
+	writeMorphDict(t, dictDir, "de_DE", "SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n", "1\ngut/A\n")
+	writeMorphDict(t, dictDir, "de_AT", "SET UTF-8\nSFX B Y 1\nSFX B 0 er .\n", "1\ngut/B\n")
 
 	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
 		"extends":      "substitution",
@@ -1174,7 +1174,7 @@ func TestMorphologySubstitutionLiteralAlternationExpansion(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\npreference/A\n",
 	)
 
@@ -1245,7 +1245,7 @@ func TestMorphologySubstitutionMarkedRegexGroupExpansion(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\npreference/A\n",
 	)
 
@@ -1316,7 +1316,7 @@ func TestMorphologySubstitutionPhraseWithPunctuation(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\npreference/A\n",
 	)
 
@@ -1372,7 +1372,7 @@ func TestMorphologySubstitutionRegexPatternSkipsWordTemplateSplit(t *testing.T) 
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"2\nsetting/A\noption/A\n",
 	)
 
@@ -1418,7 +1418,7 @@ func TestMorphologySubstitutionMarkedGroupPreservesBackreferences(t *testing.T) 
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"3\nsetting/A\noption/A\nwindow\n",
 	)
 
@@ -1527,7 +1527,7 @@ func TestExpandForMorphologyEscapesDictionaryRegexMetaCharacters(t *testing.T) {
 		t,
 		dictDir,
 		"en_US",
-		"SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n",
+		"SET UTF-8\nSFX A Y 1\nSFX A 0 s .\n",
 		"1\nC++/A\n",
 	)
 

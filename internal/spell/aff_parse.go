@@ -50,6 +50,14 @@ func newDictConfig(file io.Reader) (*dictConfig, error) { //nolint:funlen
 		}
 
 		switch parts[0] {
+		case "SET":
+			if len(parts) < 2 {
+				return nil, fmt.Errorf("SET stanza had %d fields, expected 2", len(parts))
+			}
+			encoding := strings.ToUpper(strings.ReplaceAll(parts[1], "_", "-"))
+			if encoding != "UTF-8" && encoding != "UTF8" {
+				return nil, fmt.Errorf("unsupported dictionary encoding %q: only UTF-8 is supported", parts[1])
+			}
 		case "TRY":
 			if len(parts) < 2 {
 				return nil, fmt.Errorf("TRY stanza had %d fields, expected 2", len(parts))

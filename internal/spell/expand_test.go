@@ -102,6 +102,28 @@ func TestExpandLoadFailureMentionsUTF8Encoding(t *testing.T) {
 	}
 }
 
+func TestExpandRejectsNonUTF8Set(t *testing.T) {
+	dir := t.TempDir()
+
+	affPath := filepath.Join(dir, "latin1.aff")
+	dicPath := filepath.Join(dir, "latin1.dic")
+
+	if err := os.WriteFile(affPath, []byte("SET ISO8859-1\nSFX A Y 1\nSFX A 0 s .\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dicPath, []byte("1\nfoo/A\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := newGoSpell(affPath, dicPath)
+	if err == nil {
+		t.Fatal("expected non-UTF-8 SET to return an error")
+	}
+	if !strings.Contains(err.Error(), "only UTF-8 is supported") {
+		t.Fatalf("expected explicit UTF-8-only error, got %v", err)
+	}
+}
+
 func TestExpandMergesFormsAcrossDictionaries(t *testing.T) {
 	dir := t.TempDir()
 
@@ -110,13 +132,13 @@ func TestExpandMergesFormsAcrossDictionaries(t *testing.T) {
 	affB := filepath.Join(dir, "de_AT.aff")
 	dicB := filepath.Join(dir, "de_AT.dic")
 
-	if err := os.WriteFile(affA, []byte("SET ISO8859-1\nSFX A Y 1\nSFX A 0 e .\n"), 0600); err != nil {
+	if err := os.WriteFile(affA, []byte("SET UTF-8\nSFX A Y 1\nSFX A 0 e .\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dicA, []byte("1\ngut/A\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(affB, []byte("SET ISO8859-1\nSFX B Y 1\nSFX B 0 er .\n"), 0600); err != nil {
+	if err := os.WriteFile(affB, []byte("SET UTF-8\nSFX B Y 1\nSFX B 0 er .\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dicB, []byte("1\ngut/B\n"), 0600); err != nil {
@@ -149,7 +171,7 @@ func TestExpandWithLineageKeepsAffixDerivations(t *testing.T) {
 	affPath := filepath.Join(dir, "custom.aff")
 	dicPath := filepath.Join(dir, "custom.dic")
 
-	if err := os.WriteFile(affPath, []byte("SET ISO8859-1\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n"), 0600); err != nil {
+	if err := os.WriteFile(affPath, []byte("SET UTF-8\nSFX D Y 1\nSFX D e ed e\nSFX G Y 1\nSFX G e ing e\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dicPath, []byte("2\noptimize/DG\nstreamline/GD\n"), 0600); err != nil {

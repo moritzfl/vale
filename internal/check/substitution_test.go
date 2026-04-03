@@ -1001,6 +1001,67 @@ func TestMorphologySubstitutionPrefersSameDictionaryReplacement(t *testing.T) {
 	}
 }
 
+func TestMorphologySubstitutionFallsBackToGlobalReplacementWhenSameDictionaryMisses(t *testing.T) {
+	cfg, err := core.NewConfig(&core.CLIFlags{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dictDir := t.TempDir()
+	writeMorphDict(
+		t,
+		dictDir,
+		"dictA",
+		"SET UTF-8\nSFX G Y 1\nSFX G e ing e\n",
+		"1\nstreamline/G\n",
+	)
+	writeMorphDict(
+		t,
+		dictDir,
+		"dictB",
+		"SET UTF-8\nSFX G Y 1\nSFX G e ing e\nSFX D Y 1\nSFX D e ed e\n",
+		"2\noptimize/G\nstreamline/D\n",
+	)
+
+	rule, err := makeSubstitutionWithConfig(cfg, map[string]interface{}{
+		"extends":      "substitution",
+		"name":         "Custom.OptimizeFallback",
+		"level":        "warning",
+		"message":      "Consider using '%s' instead of '%s'.",
+		"scope":        "text",
+		"ignorecase":   false,
+		"morphology":   true,
+		"dictionaries": []string{"dictA", "dictB"},
+		"dicpath":      dictDir,
+		"swap": map[string]string{
+			"optimize": "streamline",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create rule: %v", err)
+	}
+
+	expected, err := subMsg(rule, 0, "optimizing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected != "streamlining" {
+		t.Fatalf("expected global fallback replacement 'streamlining', got %q", expected)
+	}
+
+	text := "We are optimizing the workflow."
+	alerts, err := rule.Run(nlp.NewBlock(text, text, "text"), &core.File{}, cfg)
+	if err != nil {
+		t.Fatalf("Failed to run rule: %v", err)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if !strings.Contains(alerts[0].Message, "streamlining") {
+		t.Fatalf("expected message to use global fallback replacement, got %q", alerts[0].Message)
+	}
+}
+
 func TestMorphologySubstitutionPhraseExpansion(t *testing.T) {
 	cfg, err := core.NewConfig(&core.CLIFlags{})
 	if err != nil {

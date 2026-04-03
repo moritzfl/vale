@@ -203,9 +203,10 @@ func buildMorphologyReplacement(
 					continue
 				}
 
-				replacementMap := globalReplacementMap
-				if dictIdx < len(preferredReplacementMaps) && preferredReplacementMaps[dictIdx].hasMappings {
-					replacementMap = preferredReplacementMaps[dictIdx]
+				preferredMap := morphologyLineageMap{}
+				hasPreferredMap := dictIdx < len(preferredReplacementMaps) && preferredReplacementMaps[dictIdx].hasMappings
+				if hasPreferredMap {
+					preferredMap = preferredReplacementMaps[dictIdx]
 				}
 
 				for _, inflection := range group.Inflections {
@@ -214,7 +215,14 @@ func buildMorphologyReplacement(
 						continue
 					}
 
-					if mapped, ok := replacementMap.lookup(inflection); ok {
+					if hasPreferredMap {
+						if mapped, ok := preferredMap.lookup(inflection); ok {
+							partMap[key] = mapped
+							continue
+						}
+					}
+
+					if mapped, ok := globalReplacementMap.lookup(inflection); ok {
 						partMap[key] = mapped
 						continue
 					}
